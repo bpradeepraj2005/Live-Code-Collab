@@ -6,8 +6,6 @@ export default function EditorPage() {
   const monacoRef = useRef(null);
   const socketRef = useRef(null);
   const isRemote = useRef(false);
-  const remoteCursors = useRef({});
-  const oldDecorations = useRef([]);
 
   // Whiteboard Refs
   const offset = useRef({ x: 0, y: 0 });
@@ -17,40 +15,42 @@ export default function EditorPage() {
   const currentPos = useRef({ x: 0, y: 0 });
   const startPos = useRef({ x: 0, y: 0 });
 
-  // Persistent shapes for redrawing during scroll/panning
   const [shapes, setShapes] = useState([]);
   const [redoStack, setRedoStack] = useState([]);
-
   const [connected, setConnected] = useState(false);
   const [room, setRoom] = useState("");
   const [username, setUsername] = useState("");
   const [isAdmin, setIsAdmin] = useState(false);
-
   const [mode, setMode] = useState(null);
   const [nameInput, setNameInput] = useState("");
   const [roomInput, setRoomInput] = useState("");
-
   const [userList, setUserList] = useState([]);
   const [output, setOutput] = useState("");
   const [language, setLanguage] = useState("python");
-
   const [chatMessages, setChatMessages] = useState([]);
   const [chatInput, setChatInput] = useState("");
   const [toast, setToast] = useState("");
-
   const [programInput, setProgramInput] = useState("");
   const [chatOpen, setChatOpen] = useState(false);
   const [unread, setUnread] = useState(0);
   const [execTime, setExecTime] = useState(null);
   const [executionStatus, setExecutionStatus] = useState(null);
-
   const [view, setView] = useState("code");
   const [brushColor, setBrushColor] = useState("#020617");
   const [tool, setTool] = useState("pen");
   const [showColors, setShowColors] = useState(false);
   const colors = ["#020617", "#ef4444", "#22c55e", "#3b82f6", "#f59e0b"];
 
-  // 🟢 REDRAW SYSTEM
+  // 🟢 FIX: Sync Monaco syntax highlighting when language state changes
+  useEffect(() => {
+    if (editorRef.current && monacoRef.current) {
+      const model = editorRef.current.getModel();
+      if (model) {
+        monacoRef.current.editor.setModelLanguage(model, language);
+      }
+    }
+  }, [language]);
+
   const redrawCanvas = () => {
     const canvas = canvasRef.current;
     if (!canvas) return;
@@ -60,7 +60,6 @@ export default function EditorPage() {
     shapes.forEach((s) => {
       ctx.save();
       ctx.beginPath();
-
       if (s.tool === "eraser") {
         ctx.globalCompositeOperation = "destination-out";
         ctx.lineWidth = 30;
@@ -69,7 +68,6 @@ export default function EditorPage() {
         ctx.strokeStyle = s.color;
         ctx.lineWidth = 4;
       }
-
       ctx.lineCap = "round";
       ctx.lineJoin = "round";
 
@@ -100,10 +98,6 @@ export default function EditorPage() {
   };
 
   useEffect(() => {
-    if (view === "board") redrawCanvas();
-  }, [view, shapes]);
-
-  useEffect(() => {
     if (view === "board" && canvasRef.current) {
       const canvas = canvasRef.current;
       const parent = canvas.parentElement;
@@ -112,34 +106,22 @@ export default function EditorPage() {
         canvas.height = parent.clientHeight;
         redrawCanvas();
       };
-      setTimeout(resizeCanvas, 50);
+      resizeCanvas();
       window.addEventListener("resize", resizeCanvas);
       return () => window.removeEventListener("resize", resizeCanvas);
     }
   }, [view]);
 
-  // 🟢 CHAT SYNC FIX
-  const sendChatMessage = () => {
-    if (!chatInput.trim()) return;
-    const msgData = {
-      type: "chat",
-      user: username,
-      text: chatInput,
-      time: new Date().toLocaleTimeString([], {
-        hour: "2-digit",
-        minute: "2-digit",
-      }),
-    };
-    socketRef.current?.send(JSON.stringify(msgData));
-    setChatMessages((prev) => [...prev, msgData]);
-    setChatInput("");
-  };
+  useEffect(() => {
+    if (view === "board") redrawCanvas();
+  }, [view, shapes]);
 
   const undo = () => {
     if (shapes.length === 0) return;
-    const lastShape = shapes[shapes.length - 1];
+    const newShapes = [...shapes];
+    const lastShape = newShapes.pop();
     setRedoStack((prev) => [lastShape, ...prev]);
-    setShapes((prev) => prev.slice(0, -1));
+    setShapes(newShapes);
     socketRef.current?.send(JSON.stringify({ type: "undo" }));
   };
 
@@ -186,14 +168,9 @@ export default function EditorPage() {
         }
         return;
       }
+      // 🟢 FIX: Update local state when receiving language change from remote
       if (data.type === "language") {
         setLanguage(data.language);
-        if (editorRef.current && monacoRef.current) {
-          monacoRef.current.editor.setModelLanguage(
-            editorRef.current.getModel(),
-            data.language,
-          );
-        }
         return;
       }
       if (data.type === "terminate") {
@@ -211,8 +188,10 @@ export default function EditorPage() {
   }
 
   const onMouseDown = (e) => {
-    const x = e.nativeEvent.offsetX;
-    const y = e.nativeEvent.offsetY;
+    const rect = canvasRef.current.getBoundingClientRect();
+    const x = e.clientX - rect.left;
+    const y = e.clientY - rect.top;
+
     if (tool === "select") {
       isPanning.current = true;
       currentPos.current = { x, y };
@@ -225,12 +204,13 @@ export default function EditorPage() {
   };
 
   const onMouseMove = (e) => {
-    const x = e.nativeEvent.offsetX;
-    const y = e.nativeEvent.offsetY;
+    const rect = canvasRef.current.getBoundingClientRect();
+    const x = e.clientX - rect.left;
+    const y = e.clientY - rect.top;
+
     if (isPanning.current) {
       offset.current.x += x - currentPos.current.x;
       offset.current.y += y - currentPos.current.y;
-      canvasRef.current.parentElement.style.backgroundPosition = `${offset.current.x}px ${offset.current.y}px`;
       currentPos.current = { x, y };
       redrawCanvas();
       return;
@@ -239,11 +219,10 @@ export default function EditorPage() {
     if (tool === "pen" || tool === "eraser") {
       const newX = x - offset.current.x;
       const newY = y - offset.current.y;
-      const dist = Math.hypot(
-        newX - currentPos.current.x,
-        newY - currentPos.current.y,
-      );
-      if (dist < 2) return;
+      if (
+        Math.hypot(newX - currentPos.current.x, newY - currentPos.current.y) < 2
+      )
+        return;
       const shape = {
         type: "draw",
         x0: currentPos.current.x,
@@ -261,14 +240,17 @@ export default function EditorPage() {
 
   const onMouseUp = (e) => {
     if (isDrawing.current) {
+      const rect = canvasRef.current.getBoundingClientRect();
+      const x = e.clientX - rect.left;
+      const y = e.clientY - rect.top;
       const shapeTools = ["line", "rect", "circle", "triangle"];
       if (shapeTools.includes(tool)) {
         const shape = {
           type: "draw",
           x0: startPos.current.x,
           y0: startPos.current.y,
-          x1: e.nativeEvent.offsetX - offset.current.x,
-          y1: e.nativeEvent.offsetY - offset.current.y,
+          x1: x - offset.current.x,
+          y1: y - offset.current.y,
           color: brushColor,
           tool,
         };
@@ -315,17 +297,31 @@ export default function EditorPage() {
     });
   }
 
+  const sendChatMessage = () => {
+    if (!chatInput.trim() || !socketRef.current) return;
+    const msg = {
+      type: "chat",
+      user: username,
+      text: chatInput,
+      time: new Date().toLocaleTimeString([], {
+        hour: "2-digit",
+        minute: "2-digit",
+      }),
+    };
+    socketRef.current.send(JSON.stringify(msg));
+    setChatMessages((prev) => [...prev, msg]);
+    setChatInput("");
+  };
+
   function toggleChat() {
     setChatOpen(!chatOpen);
     setUnread(0);
   }
-
   function copyRoom() {
     navigator.clipboard.writeText(room);
     setToast("Room ID copied to clipboard");
     setTimeout(() => setToast(""), 2000);
   }
-
   function terminateSession() {
     socketRef.current.send(JSON.stringify({ type: "terminate" }));
   }
@@ -336,10 +332,12 @@ export default function EditorPage() {
         <div className="card">
           <h1>⚡ Live Code Collaboration</h1>
           {!mode && (
-            <>
+            <div
+              style={{ display: "flex", gap: "10px", flexDirection: "column" }}
+            >
               <button onClick={() => setMode("create")}>Create Room</button>
               <button onClick={() => setMode("join")}>Join Room</button>
-            </>
+            </div>
           )}
           {mode === "create" && (
             <>
@@ -453,7 +451,7 @@ export default function EditorPage() {
         {chatOpen && (
           <div className="chat-popup">
             <div className="chat-header">
-              💬 Team Chat
+              💬 Team Chat{" "}
               <span onClick={toggleChat} className="close">
                 ✖
               </span>
@@ -492,32 +490,27 @@ export default function EditorPage() {
                 💬 {unread > 0 && <span className="badge">{unread}</span>}
               </button>
               {view === "code" ? (
-                <div className="lang-box">
-                  <select
-                    value={language}
-                    onChange={(e) => {
-                      setLanguage(e.target.value);
-                      socketRef.current.send(
-                        JSON.stringify({
-                          type: "language",
-                          language: e.target.value,
-                        }),
-                      );
-                    }}
-                  >
-                    <option value="python">Python</option>
-                    <option value="c">C</option> {/* 🟢 Added C */}
-                    <option value="cpp">C++</option>
-                    <option value="java">Java</option>
-                    <option value="javascript">JS</option>
-                  </select>
-                </div>
+                <select
+                  className="lang-box"
+                  value={language}
+                  onChange={(e) => {
+                    const newLang = e.target.value;
+                    setLanguage(newLang);
+                    socketRef.current.send(
+                      JSON.stringify({ type: "language", language: newLang }),
+                    );
+                  }}
+                >
+                  <option value="python">Python</option>
+                  <option value="c">C</option>
+                  <option value="cpp">C++</option>
+                  <option value="java">Java</option>
+                  <option value="javascript">JS</option>
+                </select>
               ) : (
-                <div className="board-tools">
-                  <button className="btn clear-btn" onClick={clearBoard}>
-                    🗑️ Clear Board
-                  </button>
-                </div>
+                <button className="btn clear-btn" onClick={clearBoard}>
+                  🗑️ Clear Board
+                </button>
               )}
             </div>
             {view === "code" && (
@@ -553,72 +546,39 @@ export default function EditorPage() {
           >
             <div className="miro-sidebar-container">
               <div className="miro-main-tools">
-                <button
-                  className={`miro-tool ${tool === "select" ? "active" : ""}`}
-                  onClick={() => {
-                    setTool("select");
-                    setShowColors(false);
-                  }}
-                >
-                  ➤
-                </button>
-                <button
-                  className={`miro-tool ${tool === "rect" ? "active" : ""}`}
-                  onClick={() => {
-                    setTool("rect");
-                    setShowColors(false);
-                  }}
-                >
-                  ▢
-                </button>
-                <button
-                  className={`miro-tool ${tool === "circle" ? "active" : ""}`}
-                  onClick={() => {
-                    setTool("circle");
-                    setShowColors(false);
-                  }}
-                >
-                  ◯
-                </button>
-                <button
-                  className={`miro-tool ${tool === "triangle" ? "active" : ""}`}
-                  onClick={() => {
-                    setTool("triangle");
-                    setShowColors(false);
-                  }}
-                >
-                  △
-                </button>
-                <button
-                  className={`miro-tool ${tool === "pen" ? "active" : ""}`}
-                  onClick={() => {
-                    if (tool === "pen") setShowColors(!showColors);
-                    else {
-                      setTool("pen");
-                      setShowColors(true);
-                    }
-                  }}
-                >
-                  🖊️
-                </button>
-                <button
-                  className={`miro-tool ${tool === "line" ? "active" : ""}`}
-                  onClick={() => {
-                    setTool("line");
-                    setShowColors(false);
-                  }}
-                >
-                  ↗
-                </button>
-                <button
-                  className={`miro-tool ${tool === "eraser" ? "active" : ""}`}
-                  onClick={() => {
-                    setTool("eraser");
-                    setShowColors(false);
-                  }}
-                >
-                  🧼
-                </button>
+                {[
+                  "select",
+                  "rect",
+                  "circle",
+                  "triangle",
+                  "pen",
+                  "line",
+                  "eraser",
+                ].map((t) => (
+                  <button
+                    key={t}
+                    className={`miro-tool ${tool === t ? "active" : ""}`}
+                    onClick={() => {
+                      setTool(t);
+                      if (t === "pen") setShowColors(!showColors);
+                      else setShowColors(false);
+                    }}
+                  >
+                    {t === "select"
+                      ? "➤"
+                      : t === "rect"
+                        ? "▢"
+                        : t === "circle"
+                          ? "◯"
+                          : t === "triangle"
+                            ? "△"
+                            : t === "pen"
+                              ? "🖊️"
+                              : t === "line"
+                                ? "↗"
+                                : "🧼"}
+                  </button>
+                ))}
               </div>
               {tool === "pen" && showColors && (
                 <div className="miro-color-palette">
@@ -636,18 +596,10 @@ export default function EditorPage() {
                 </div>
               )}
               <div className="miro-history-tools">
-                <button
-                  onClick={undo}
-                  disabled={shapes.length === 0}
-                  title="Undo"
-                >
+                <button onClick={undo} disabled={shapes.length === 0}>
                   ↩
                 </button>
-                <button
-                  onClick={redo}
-                  disabled={redoStack.length === 0}
-                  title="Redo"
-                >
+                <button onClick={redo} disabled={redoStack.length === 0}>
                   ↪
                 </button>
               </div>
@@ -709,6 +661,39 @@ export default function EditorPage() {
         )}
       </div>
       {toast && <div className="toast">{toast}</div>}
+      <style>{`
+        body { margin: 0; height: 100vh; overflow: hidden; background: #0f172a; font-family: 'Inter', system-ui, sans-serif; color: #f8fafc; }
+        .app { height: 100vh; display: flex; flex-direction: column; }
+        .topbar { height: 56px; background: #020617; display: flex; justify-content: space-between; align-items: center; padding: 0 18px; border-bottom: 1px solid #1e293b; flex-shrink: 0; }
+        .workspace { flex: 1; display: flex; overflow: hidden; position: relative; }
+        .chat-popup { position: fixed; bottom: 24px; left: 80px; width: 340px; height: 420px; background: #020617; border: 1px solid #1e293b; border-radius: 12px; display: flex; flex-direction: column; z-index: 2000; box-shadow: 0 10px 40px rgba(0, 0, 0, 0.5); }
+        .toast { position: fixed; top: 24px; right: 24px; background: #38bdf8; color: #020617; padding: 12px 20px; border-radius: 8px; font-weight: 600; font-size: 14px; box-shadow: 0 10px 25px rgba(0, 0, 0, 0.3); z-index: 9999; }
+        .editor-area { flex: 1; display: flex; flex-direction: column; min-width: 0; }
+        .side-panel { width: 320px; display: flex; flex-direction: column; border-left: 1px solid #1e293b; background: #020617; }
+        .miro-board { background-color: #ffffff !important; background-image: radial-gradient(#d1d5db 1px, transparent 1px) !important; background-size: 20px 20px !important; }
+        .miro-sidebar-container { position: absolute; left: 12px; top: 50%; transform: translateY(-50%); display: flex; flex-direction: column; gap: 12px; z-index: 1000; }
+        .miro-main-tools, .miro-history-tools { background: white; padding: 6px; border-radius: 10px; display: flex; flex-direction: column; gap: 4px; box-shadow: 0 2px 10px rgba(0, 0, 0, 0.08); }
+        .miro-tool, .miro-history-tools button { width: 40px; height: 40px; border: none; border-radius: 8px; cursor: pointer; display: flex; align-items: center; justify-content: center; font-size: 18px; background: transparent; color: #444; }
+        .miro-tool.active { background: #eef1ff; color: #4262ff; }
+        .chat-header { padding: 14px; display: flex; justify-content: space-between; align-items: center; border-bottom: 1px solid #1e293b; font-weight: 600; }
+        .chat-messages { flex: 1; overflow-y: auto; padding: 16px; display: flex; flex-direction: column; gap: 12px; }
+        .chat-bubble { background: #0f172a; padding: 10px; border-radius: 10px; border: 1px solid #1e293b; font-size: 13px; }
+        .chat-row.me .chat-bubble { background: #5865f2; border-color: #5865f2; }
+        .chat-input-bar { padding: 12px; display: flex; gap: 8px; border-top: 1px solid #1e293b; }
+        .chat-input-bar input { flex: 1; background: #0f172a; border: 1px solid #334155; color: white; padding: 8px; border-radius: 6px; outline: none; }
+        .chat-input-bar button { background: #5865f2; border: none; padding: 0 12px; border-radius: 6px; color: white; cursor: pointer; }
+        .view-toggle { display: flex; background: #0f172a; border: 1px solid #334155; border-radius: 8px; }
+        .view-toggle button { background: transparent; border: none; padding: 8px 16px; color: #94a3b8; cursor: pointer; }
+        .view-toggle button.active { background: #38bdf8; color: #020617; font-weight: 600; }
+        .room-pill { display: flex; gap: 8px; align-items: center; background: #0f172a; border: 1px solid #334155; padding: 6px 12px; border-radius: 8px; }
+        .room-id { font-weight: 700; color: #38bdf8; }
+        .run-btn { background: #22c55e; border: none; padding: 8px 16px; border-radius: 8px; font-weight: 700; cursor: pointer; color: #020617; }
+        .time-badge { background: rgba(34, 197, 94, 0.15); color: #22c55e; padding: 2px 8px; border-radius: 6px; font-size: 11px; }
+        .status-msg.success { color: #22c55e; }
+        .error-text { color: #ef4444; }
+        .badge { background: #ef4444; color: white; border-radius: 50%; padding: 2px 6px; font-size: 10px; margin-left: 4px; }
+        .lang-box { background: #0f172a; color: white; border: 1px solid #334155; border-radius: 8px; padding: 4px 8px; outline: none; }
+      `}</style>
     </div>
   );
 }
