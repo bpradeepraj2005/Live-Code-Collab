@@ -1,0 +1,1028 @@
+body { margin: 0; height: 100vh; overflow: hidden; background: #0f172a; font-family: sans-serif; color: #f8fafc; }
+.app { height: 100vh; display: flex; flex-direction: column; }
+.topbar { height: 56px; background: #020617; display: flex; justify-content: space-between; align-items: center; padding: 0 20px; border-bottom: 1px solid #1e293b; }
+.workspace { flex: 1; display: flex; overflow: hidden; }
+.editor-area { flex: 1; display: flex; flex-direction: column; }
+.side-panel { width: 300px; display: flex; flex-direction: column; border-left: 1px solid #1e293b; background: #020617; }
+.input-area { height: 40%; background: transparent; color: white; border: none; padding: 10px; resize: none; border-bottom: 1px solid #1e293b; }
+.output-panel { flex: 1; padding: 10px; overflow-y: auto; }
+
+/* Miro Whiteboard Styling */
+.miro-board {
+  background-color: #f8fafc !important;
+  background-image: radial-gradient(#cbd5e1 1.5px, transparent 1.5px) !important;
+  background-size: 24px 24px !important;
+}
+.miro-board canvas { width: 100%; height: 100%; cursor: crosshair; }
+
+.floating-toolbar {
+  position: absolute; left: 20px; top: 50%; transform: translateY(-50%);
+  display: flex; flex-direction: column; gap: 10px;
+  background: rgba(255, 255, 255, 0.9); backdrop-filter: blur(10px);
+  padding: 10px; border-radius: 12px; box-shadow: 0 4px 15px rgba(0,0,0,0.1);
+}
+.floating-toolbar button {
+  width: 40px; height: 40px; border-radius: 8px; border: none; cursor: pointer; font-size: 18px;
+}
+.floating-toolbar button.active { background: #38bdf8; color: white; }
+
+.view-toggle { display: flex; background: #1e293b; border-radius: 8px; padding: 2px; }
+.view-toggle button { background: transparent; border: none; color: #94a3b8; padding: 6px 15px; cursor: pointer; border-radius: 6px; }
+.view-toggle button.active { background: #38bdf8; color: #020617; font-weight: bold; }
+
+.status-msg.success { color: #22c55e; font-weight: bold; padding-top: 10px; }
+.error-text { color: #f87171; }
+/* ==========================================================================
+   RESET & BASE STYLES
+   ========================================================================== */
+body {
+  margin: 0;
+  padding: 0;
+  height: 100vh;
+  overflow: hidden;
+  background: #0f172a;
+  font-family: 'Inter', system-ui, sans-serif;
+  color: #f8fafc;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+/* ==========================================================================
+   LANDING PAGE
+   ========================================================================== */
+.landing {
+  height: 100vh;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: radial-gradient(circle at top, #1e293b, #020617);
+}
+
+.card {
+  width: 420px;
+  padding: 40px;
+  background: rgba(15, 23, 42, 0.8);
+  border: 1px solid #334155;
+  border-radius: 18px;
+  text-align: center;
+  box-shadow: 0 20px 40px rgba(0, 0, 0, 0.5);
+  backdrop-filter: blur(10px);
+}
+
+.card h1 {
+  font-size: 24px;
+  margin-bottom: 24px;
+  color: #e2e8f0;
+}
+
+.avatar-box img {
+  width: 80px;
+  border-radius: 50%;
+  margin-bottom: 15px;
+  background: #1e293b;
+}
+
+.card input {
+  width: 100%;
+  padding: 14px;
+  margin: 8px 0;
+  border-radius: 10px;
+  border: 1px solid #334155;
+  background: #020617;
+  color: white;
+  font-size: 14px;
+  outline: none;
+  transition: border 0.2s;
+}
+
+.card input:focus {
+  border-color: #38bdf8;
+}
+
+.card button {
+  width: 100%;
+  padding: 14px;
+  margin-top: 10px;
+  border-radius: 10px;
+  border: none;
+  background: #5865f2;
+  color: white;
+  font-size: 15px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: background 0.2s;
+}
+
+.card button:hover {
+  background: #4f5bd5;
+}
+
+.card button.secondary {
+  background: transparent;
+  border: 1px solid #334155;
+  color: #94a3b8;
+}
+
+.card button.secondary:hover {
+  background: #1e293b;
+  color: white;
+}
+
+/* ==========================================================================
+   MAIN APP LAYOUT
+   ========================================================================== */
+.app {
+  height: 100vh;
+  display: flex;
+  flex-direction: column;
+}
+
+.topbar {
+  height: 56px;
+  background: #020617;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 0 18px;
+  border-bottom: 1px solid #1e293b;
+  flex-shrink: 0;
+}
+
+.workspace {
+  flex: 1;
+  display: flex;
+  overflow: hidden;
+}
+
+/* ==========================================================================
+   TOPBAR - ROOM INFO & USERS
+   ========================================================================== */
+.room-info {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+}
+
+.room-pill {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  background: #0f172a;
+  border: 1px solid #334155;
+  padding: 6px 12px;
+  border-radius: 8px;
+}
+
+.room-label {
+  font-size: 11px;
+  color: #94a3b8;
+  font-weight: 600;
+}
+
+.room-id {
+  font-weight: 700;
+  color: #38bdf8;
+  letter-spacing: 1px;
+}
+
+.users {
+  display: flex;
+  gap: 6px;
+}
+
+.user-dot {
+  width: 28px;
+  height: 28px;
+  border-radius: 50%;
+  background: #1e293b;
+  border: 1px solid #334155;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 12px;
+  font-weight: 700;
+  color: #e2e8f0;
+}
+
+/* ==========================================================================
+   TOPBAR - ADMIN ACTIONS & TOGGLES
+   ========================================================================== */
+.admin-actions {
+  display: flex;
+  gap: 10px;
+}
+
+.btn {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 14px;
+  border-radius: 8px;
+  border: 1px solid transparent;
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all 0.2s;
+}
+
+.btn.copy {
+  background: #0f172a;
+  border-color: #334155;
+  color: #e2e8f0;
+}
+
+.btn.copy:hover {
+  background: #1e293b;
+}
+
+.btn.end {
+  background: rgba(239, 68, 68, 0.1);
+  border-color: rgba(239, 68, 68, 0.3);
+  color: #f87171;
+}
+
+.btn.end:hover {
+  background: rgba(239, 68, 68, 0.2);
+}
+
+.view-toggle {
+  display: flex;
+  background: #0f172a;
+  border: 1px solid #334155;
+  border-radius: 8px;
+  overflow: hidden;
+  margin-left: 20px;
+}
+
+.view-toggle button {
+  background: transparent;
+  border: none;
+  padding: 8px 16px;
+  color: #94a3b8;
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all 0.2s;
+}
+
+.view-toggle button:hover {
+  color: white;
+}
+
+.view-toggle button.active {
+  background: #38bdf8;
+  color: #020617;
+}
+
+/* ==========================================================================
+   EDITOR AREA & CONTROLS
+   ========================================================================== */
+.editor-area {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+
+.controls-bar {
+  height: 50px;
+  padding: 0 16px;
+  background: #0f172a;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  border-bottom: 1px solid #1e293b;
+  flex-shrink: 0;
+}
+
+.left-controls {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.chat-toggle-btn {
+  background: #1e293b;
+  border: 1px solid #334155;
+  padding: 6px 14px;
+  border-radius: 8px;
+  color: white;
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+  position: relative;
+  transition: 0.2s;
+}
+
+.chat-toggle-btn:hover {
+  background: #334155;
+}
+
+.badge {
+  position: absolute;
+  top: -6px;
+  right: -6px;
+  background: #ef4444;
+  color: white;
+  font-size: 11px;
+  padding: 2px 6px;
+  border-radius: 12px;
+}
+
+.lang-box select {
+  background: #020617;
+  color: #e2e8f0;
+  border: 1px solid #334155;
+  padding: 6px 12px;
+  border-radius: 8px;
+  outline: none;
+  font-size: 13px;
+  cursor: pointer;
+}
+
+.run-btn {
+  background: #22c55e;
+  border: none;
+  padding: 8px 16px;
+  border-radius: 8px;
+  font-weight: 700;
+  color: #020617;
+  cursor: pointer;
+  font-size: 13px;
+  transition: 0.2s;
+}
+
+.run-btn:hover {
+  background: #16a34a;
+  transform: translateY(-1px);
+}
+
+.editor {
+  flex: 1;
+  overflow: hidden;
+}
+
+/* ==========================================================================
+   SIDE PANEL (INPUT / OUTPUT)
+   ========================================================================== */
+.side-panel {
+  width: 350px;
+  display: flex;
+  flex-direction: column;
+  border-left: 1px solid #1e293b;
+  background: #0f172a;
+  flex-shrink: 0;
+}
+
+.input-panel,
+.output-panel {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+}
+
+.input-panel {
+  border-bottom: 1px solid #1e293b;
+}
+
+.panel-header {
+  padding: 10px 14px;
+  font-size: 13px;
+  font-weight: 600;
+  color: #94a3b8;
+  background: #020617;
+  border-bottom: 1px solid #1e293b;
+  flex-shrink: 0;
+}
+
+.input-area {
+  flex: 1;
+  background: transparent;
+  border: none;
+  color: #f8fafc;
+  padding: 14px;
+  resize: none;
+  font-family: 'Courier New', monospace;
+  font-size: 13px;
+  outline: none;
+}
+
+.panel-body {
+  flex: 1;
+  overflow-y: auto;
+  padding: 14px;
+  font-family: 'Courier New', monospace;
+  font-size: 13px;
+}
+
+.panel-body pre {
+  margin: 0;
+  color: #22c55e;
+  white-space: pre-wrap;
+  word-wrap: break-word;
+}
+
+.empty {
+  color: #475569;
+}
+
+/* ==========================================================================
+   CHAT POPUP
+   ========================================================================== */
+.chat-popup {
+  position: fixed;
+  bottom: 24px;
+  left: 24px;
+  width: 340px;
+  height: 420px;
+  background: #020617;
+  border: 1px solid #1e293b;
+  border-radius: 12px;
+  display: flex;
+  flex-direction: column;
+  z-index: 50;
+  box-shadow: 0 10px 40px rgba(0, 0, 0, 0.5);
+  animation: chatPop 0.2s ease;
+}
+
+@keyframes chatPop {
+  from { transform: translateY(10px) scale(0.98); opacity: 0; }
+  to { transform: translateY(0) scale(1); opacity: 1; }
+}
+
+.chat-header {
+  padding: 14px;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  border-bottom: 1px solid #1e293b;
+  font-weight: 600;
+  color: #e2e8f0;
+}
+
+.close {
+  cursor: pointer;
+  color: #94a3b8;
+}
+
+.close:hover {
+  color: white;
+}
+
+.chat-messages {
+  flex: 1;
+  overflow-y: auto;
+  padding: 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.chat-row {
+  display: flex;
+  gap: 10px;
+  align-items: flex-end;
+}
+
+.chat-row.me {
+  flex-direction: row-reverse;
+}
+
+.chat-avatar {
+  width: 28px;
+  height: 28px;
+  border-radius: 50%;
+  background: #1e293b;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 12px;
+  font-weight: 700;
+  flex-shrink: 0;
+}
+
+.chat-bubble {
+  background: #0f172a;
+  padding: 10px 14px;
+  border-radius: 12px 12px 12px 2px;
+  max-width: 240px;
+  border: 1px solid #1e293b;
+}
+
+.chat-row.me .chat-bubble {
+  background: #5865f2;
+  border-color: #5865f2;
+  border-radius: 12px 12px 2px 12px;
+}
+
+.chat-meta {
+  display: flex;
+  gap: 8px;
+  align-items: baseline;
+  margin-bottom: 4px;
+}
+
+.chat-user {
+  font-size: 12px;
+  font-weight: 600;
+  color: #38bdf8;
+}
+
+.chat-row.me .chat-user {
+  color: #c7d2fe;
+}
+
+.chat-time {
+  font-size: 10px;
+  color: #64748b;
+}
+
+.chat-row.me .chat-time {
+  color: #a5b4fc;
+}
+
+.chat-text {
+  font-size: 13px;
+  line-height: 1.4;
+}
+
+.chat-input-bar {
+  padding: 12px;
+  display: flex;
+  gap: 8px;
+  border-top: 1px solid #1e293b;
+}
+
+.chat-input-bar input {
+  flex: 1;
+  background: #0f172a;
+  border: 1px solid #334155;
+  color: white;
+  padding: 10px 12px;
+  border-radius: 8px;
+  outline: none;
+  font-size: 13px;
+}
+
+.chat-input-bar input:focus {
+  border-color: #38bdf8;
+}
+
+.chat-input-bar button {
+  background: #5865f2;
+  border: none;
+  padding: 0 16px;
+  border-radius: 8px;
+  color: white;
+  font-weight: 600;
+  cursor: pointer;
+  transition: 0.2s;
+}
+
+.chat-input-bar button:hover {
+  background: #4f5bd5;
+}
+
+/* ==========================================================================
+   TOAST NOTIFICATIONS
+   ========================================================================== */
+.toast {
+  position: fixed;
+  top: 24px;
+  right: 24px;
+  background: #5865f2;
+  color: white;
+  padding: 12px 20px;
+  border-radius: 8px;
+  font-weight: 600;
+  font-size: 14px;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.3);
+  animation: slideIn 0.3s ease;
+}
+
+@keyframes slideIn {
+  from { transform: translateX(100%); opacity: 0; }
+  to { transform: translateX(0); opacity: 1; }
+}
+
+/* ==========================================================================
+   MAGIC FEATURES (CURSORS, TIMERS, & EXECUTION STATUS)
+   ========================================================================== */
+.remote-cursor {
+  border-left: 2px solid #f59e0b !important;
+  box-shadow: 0 0 8px rgba(245, 158, 11, 0.8);
+  position: absolute;
+  z-index: 10;
+  transition: all 0.1s ease;
+}
+
+.time-badge {
+  background: rgba(34, 197, 94, 0.15);
+  color: #22c55e;
+  padding: 2px 8px;
+  border-radius: 6px;
+  font-size: 11px;
+  font-weight: 700;
+  border: 1px solid rgba(34, 197, 94, 0.3);
+  animation: popIn 0.3s ease;
+}
+
+@keyframes popIn {
+  0% { transform: scale(0.8); opacity: 0; }
+  100% { transform: scale(1); opacity: 1; }
+}
+
+.status-msg {
+  margin-top: auto;
+  padding-top: 12px;
+  font-weight: 600;
+  font-size: 13px;
+  border-top: 1px dashed #334155;
+}
+
+.status-msg.success {
+  color: #22c55e;
+}
+
+.status-msg.running {
+  color: #38bdf8;
+  border: none;
+  margin-top: 0;
+  padding-bottom: 12px;
+}
+
+.error-text {
+  color: #ef4444 !important;
+}
+
+/* ==========================================================================
+   MIRO WHITEBOARD STYLES & TOOLS
+   ========================================================================== */
+.board-tools {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-left: 10px;
+}
+
+.color-picker {
+  -webkit-appearance: none;
+  -moz-appearance: none;
+  appearance: none;
+  width: 30px;
+  height: 30px;
+  background: transparent;
+  border: none;
+  cursor: pointer;
+}
+
+.color-picker::-webkit-color-swatch {
+  border-radius: 50%;
+  border: 2px solid #334155;
+}
+
+.clear-btn {
+  background: white;
+  color: #ef4444;
+  border: 1px solid #e2e8f0;
+  box-shadow: 0 2px 4px rgba(0,0,0,0.05);
+}
+
+.clear-btn:hover {
+  background: #fef2f2;
+}
+
+.miro-board {
+  background-color: #f8fafc !important;
+  background-image: radial-gradient(#cbd5e1 2px, transparent 2px) !important;
+  background-size: 24px 24px !important;
+  box-shadow: inset 0 0 20px rgba(0,0,0,0.05);
+}
+
+.miro-board canvas {
+  background: transparent;
+}
+/* ==========================================================================
+   MIRO VERTICAL SIDEBAR
+   ========================================================================== */
+/* ==========================================================================
+   MINIMALIST MIRO SIDEBAR
+   ========================================================================== */
+.miro-sidebar-container {
+  position: absolute;
+  left: 12px;
+  top: 50%;
+  transform: translateY(-50%);
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  z-index: 100;
+}
+
+.miro-main-tools, .miro-history-tools {
+  background: white;
+  padding: 6px;
+  border-radius: 10px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  box-shadow: 0 2px 10px rgba(0, 0, 0, 0.08);
+}
+
+.miro-tool, .miro-history-tools button {
+  width: 40px;
+  height: 40px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: transparent;
+  border: none;
+  border-radius: 6px;
+  font-size: 18px;
+  cursor: pointer;
+  color: #444;
+}
+
+.miro-tool.active {
+  background: #eef1ff;
+  color: #4262ff;
+}
+
+.miro-tool:hover {
+  background: #f0f2f5;
+}
+
+/* Active State Colors */
+.miro-tool.active, 
+.miro-tool.select {
+  color: #4262ff;
+}
+
+.miro-tool.active {
+  background: #eef1ff;
+}
+
+/* History buttons styling */
+.miro-history-tools button {
+  color: #b0b8c4;
+}
+
+.miro-history-tools button:active {
+  color: #444;
+}
+
+
+/* ==========================================================================
+   2. WHITEBOARD & MIRO SIDEBAR (REQUIRED)
+   ========================================================================== */
+.miro-board {
+  background-color: #f8fafc !important;
+  background-image: radial-gradient(#cbd5e1 1.5px, transparent 1.5px) !important;
+  background-size: 24px 24px !important;
+}
+
+.miro-board canvas {
+  width: 100%;
+  height: 100%;
+  background: transparent;
+}
+
+.miro-sidebar-container {
+  position: absolute;
+  left: 12px;
+  top: 50%;
+  transform: translateY(-50%);
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  z-index: 100;
+}
+
+.miro-main-tools, 
+.miro-history-tools {
+  background: white;
+  padding: 6px;
+  border-radius: 10px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  box-shadow: 0 2px 10px rgba(0, 0, 0, 0.08);
+}
+
+.miro-tool, 
+.miro-history-tools button {
+  width: 40px;
+  height: 40px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: transparent;
+  border: none;
+  border-radius: 8px;
+  font-size: 18px;
+  color: #444;
+  cursor: pointer;
+  transition: 0.2s;
+}
+
+.miro-tool:hover, 
+.miro-history-tools button:hover { background: #f0f2f5; }
+
+.miro-tool.active {
+  background: #eef1ff;
+  color: #4262ff;
+}
+
+/* ==========================================================================
+   3. PANELS & UI COMPONENTS
+   ========================================================================== */
+.editor-area { flex: 1; display: flex; flex-direction: column; min-width: 0; }
+
+.side-panel {
+  width: 320px;
+  display: flex;
+  flex-direction: column;
+  border-left: 1px solid #1e293b;
+  background: #020617;
+}
+
+.input-area {
+  height: 40%;
+  background: transparent;
+  color: white;
+  border: none;
+  padding: 15px;
+  resize: none;
+  border-bottom: 1px solid #1e293b;
+  outline: none;
+  font-family: monospace;
+}
+
+.panel-header {
+  padding: 10px 15px;
+  font-size: 12px;
+  font-weight: bold;
+  color: #94a3b8;
+  background: #0f172a;
+}
+
+.view-toggle {
+  display: flex;
+  background: #1e293b;
+  border-radius: 8px;
+  padding: 2px;
+}
+
+.view-toggle button {
+  background: transparent;
+  border: none;
+  color: #94a3b8;
+  padding: 6px 15px;
+  cursor: pointer;
+  border-radius: 6px;
+}
+
+.view-toggle button.active {
+  background: #38bdf8;
+  color: #020617;
+  font-weight: bold;
+}
+
+.toast {
+  position: fixed;
+  bottom: 24px;
+  right: 24px;
+  background: #38bdf8;
+  color: white;
+  padding: 12px 20px;
+  border-radius: 8px;
+}
+
+/* ==========================================================================
+   COLOR PALETTE
+   ========================================================================== */
+.miro-color-palette {
+  position: absolute;
+  left: 55px; /* Positions it to the right of the main toolbar */
+  top: 150px; /* Aligns it roughly with the Pen tool */
+  background: white;
+  padding: 8px;
+  border-radius: 10px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  box-shadow: 0 2px 10px rgba(0, 0, 0, 0.08);
+  animation: fadeIn 0.2s ease;
+}
+
+.color-dot {
+  width: 20px;
+  height: 20px;
+  border-radius: 50%;
+  cursor: pointer;
+  border: 2px solid transparent;
+  transition: transform 0.1s;
+}
+
+.color-dot:hover {
+  transform: scale(1.2);
+}
+
+.color-dot.active {
+  border-color: #cbd5e1;
+  box-shadow: 0 0 0 2px white, 0 0 0 4px #4262ff;
+}
+
+@keyframes fadeIn {
+  from { opacity: 0; transform: translateX(-5px); }
+  to { opacity: 1; transform: translateX(0); }
+}
+/* ==========================================================================
+   MIRO TEXT BOX INPUT
+   ========================================================================== */
+.canvas-text-input {
+  position: absolute;
+  background: transparent;
+  border: 1px solid #4262ff; /* Miro blue border */
+  color: #020617;
+  font-family: 'Inter', sans-serif;
+  font-size: 20px;
+  padding: 4px;
+  outline: none;
+  min-width: 50px;
+  z-index: 105;
+  transform: translateY(-5px); /* Offset slightly to align with cursor */
+}
+
+.canvas-text-input {
+  position: absolute;
+  background: white; /* Visible background like Miro */
+  border: 1px solid #4262ff; /* Miro Blue border */
+  color: #020617;
+  font-family: 'Inter', sans-serif;
+  font-size: 20px;
+  padding: 4px 8px;
+  outline: none;
+  min-width: 120px;
+  z-index: 1000;
+  box-shadow: 0 2px 5px rgba(0,0,0,0.1);
+}
+
+/* ==========================================================================
+   INFINITE GRAPH SHEET BACKGROUND
+   ========================================================================== */
+.miro-board {
+  background-color: #ffffff !important;
+  /* Creates a large grid (sub-divided) */
+  background-image: 
+    linear-gradient(to right, #f0f0f0 1px, transparent 1px),
+    linear-gradient(to bottom, #f0f0f0 1px, transparent 1px),
+    linear-gradient(to right, #e0e0e0 1px, transparent 1px),
+    linear-gradient(to bottom, #e0e0e0 1px, transparent 1px);
+  background-size: 20px 20px, 20px 20px, 100px 100px, 100px 100px;
+  background-position: center center;
+  overflow: hidden; /* We handle scrolling via canvas transform */
+  position: relative;
+}
+
+/* Change cursor to indicate eraser size */
+.miro-board canvas.erasing {
+  cursor: cell;
+}
+
+.miro-tool.active[title="Eraser"] {
+  background: #fecaca; /* Light red background for active eraser */
+  color: #dc2626;
+}
+/* Miro Board Background with Dots */
+.miro-board {
+  background-color: #ffffff !important;
+  background-image: radial-gradient(#d1d5db 1px, transparent 1px) !important;
+  background-size: 20px 20px !important;
+  background-attachment: local !important;
+  overflow: hidden;
+  position: relative;
+}
+
+/* Grabbing cursor for infinite scroll */
+.miro-board canvas[style*="cursor: grab"]:active {
+  cursor: grabbing !important;
+}
+
+/* Miro Text Box Styling */
+.canvas-text-input {
+  position: absolute;
+  background: white;
+  border: 1px solid #4262ff;
+  color: #020617;
+  font-family: 'Inter', sans-serif;
+  font-size: 20px;
+  padding: 4px 8px;
+  outline: none;
+  min-width: 120px;
+  z-index: 1000;
+  box-shadow: 0 2px 5px rgba(0,0,0,0.1);
+}
