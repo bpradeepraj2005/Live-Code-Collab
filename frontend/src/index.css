@@ -893,12 +893,25 @@ body {
 
 .toast {
   position: fixed;
-  bottom: 24px;
+  top: 24px;
   right: 24px;
   background: #38bdf8;
-  color: white;
+  color: #020617; /* Dark text for better contrast on light blue */
   padding: 12px 20px;
   border-radius: 8px;
+  font-weight: 600;
+  font-size: 14px;
+  box-shadow: 0 10px 25px rgba(0, 0, 0, 0.3);
+  z-index: 9999; /* Ensures it stays above all other panels */
+  width: auto;   /* Prevents it from stretching */
+  min-width: 200px;
+  text-align: center;
+  animation: slideIn 0.3s ease;
+}
+
+@keyframes slideIn {
+  from { transform: translateX(100%); opacity: 0; }
+  to { transform: translateX(0); opacity: 1; }
 }
 
 /* ==========================================================================
