@@ -6,16 +6,24 @@ export default function EditorPage() {
   const monacoRef = useRef(null);
   const socketRef = useRef(null);
   const isRemote = useRef(false);
+  const codeTimeout = useRef(null);
 
   // Whiteboard Refs
   const canvasRef = useRef(null);
   const isDrawing = useRef(false);
-  const currentPos = useRef({ x: 0, y: 0 }); // World Coords
-  const startPos = useRef({ x: 0, y: 0 }); // World Coords
+  const currentPos = useRef({ x: 0, y: 0 });
+  const startPos = useRef({ x: 0, y: 0 });
+  const sizeIndicatorRef = useRef(null);
+  const strokeHistory = useRef([]);
+  const currentStrokeCount = useRef(0);
 
-  // 🟢 INFINITE CANVAS LOGIC
+  // Stale Closure Refs
+  const usernameRef = useRef("");
+  const chatOpenRef = useRef(false);
+
+  // INFINITE CANVAS LOGIC
   const [scale, setScale] = useState(1);
-  const [offset, setOffset] = useState({ x: 0, y: 0 });
+  const offset = useRef({ x: 0, y: 0 });
   const isPanning = useRef(false);
   const lastMousePos = useRef({ x: 0, y: 0 });
 
@@ -45,13 +53,14 @@ export default function EditorPage() {
   const [showColors, setShowColors] = useState(false);
   const colors = ["#020617", "#ef4444", "#22c55e", "#3b82f6", "#f59e0b"];
 
-  // 🟢 HELPER: Screen to World conversion
+  // 🟢 NEW: State for the floating members window
+  const [showMembers, setShowMembers] = useState(false);
+
   const toWorld = (x, y) => ({
-    x: (x - offset.x) / scale,
-    y: (y - offset.y) / scale,
+    x: (x - offset.current.x) / scale,
+    y: (y - offset.current.y) / scale,
   });
 
-  // 🟢 ZOOM LOGIC
   const handleWheel = (e) => {
     e.preventDefault();
     const factor = Math.pow(1.1, -e.deltaY / 100);
@@ -61,12 +70,15 @@ export default function EditorPage() {
     const mouseX = e.clientX - rect.left;
     const mouseY = e.clientY - rect.top;
 
-    setOffset({
-      x: mouseX - (mouseX - offset.x) * (newScale / scale),
-      y: mouseY - (mouseY - offset.y) * (newScale / scale),
-    });
+    offset.current = {
+      x: mouseX - (mouseX - offset.current.x) * (newScale / scale),
+      y: mouseY - (mouseY - offset.current.y) * (newScale / scale),
+    };
     setScale(newScale);
   };
+
+  const zoomIn = () => setScale((s) => Math.min(s + 0.1, 5));
+  const zoomOut = () => setScale((s) => Math.max(s - 0.1, 0.1));
 
   useEffect(() => {
     const canvas = canvasRef.current;
@@ -74,7 +86,7 @@ export default function EditorPage() {
       canvas.addEventListener("wheel", handleWheel, { passive: false });
       return () => canvas.removeEventListener("wheel", handleWheel);
     }
-  }, [view, scale, offset]);
+  }, [view, scale]);
 
   useEffect(() => {
     if (editorRef.current && monacoRef.current) {
@@ -92,10 +104,10 @@ export default function EditorPage() {
     ctx.clearRect(0, 0, canvas.width, canvas.height);
 
     ctx.save();
-    ctx.translate(offset.x, offset.y);
+    ctx.translate(offset.current.x, offset.current.y);
     ctx.scale(scale, scale);
 
-    shapes.forEach((s) => {
+    (shapes || []).forEach((s) => {
       ctx.beginPath();
       if (s.tool === "eraser") {
         ctx.globalCompositeOperation = "destination-out";
@@ -144,117 +156,221 @@ export default function EditorPage() {
       window.addEventListener("resize", resizeCanvas);
       return () => window.removeEventListener("resize", resizeCanvas);
     }
-  }, [view, shapes, offset, scale]);
+  }, [view, shapes, scale]);
 
   useEffect(() => {
     if (view === "board") redrawCanvas();
-  }, [view, shapes, offset, scale]);
+  }, [view, shapes, scale]);
 
   const undo = () => {
     if (shapes.length === 0) return;
-    const newShapes = [...shapes];
-    const lastShape = newShapes.pop();
-    setRedoStack((prev) => [lastShape, ...prev]);
-    setShapes(newShapes);
-    socketRef.current?.send(JSON.stringify({ type: "undo" }));
+    let count =
+      strokeHistory.current.length > 0 ? strokeHistory.current.pop() : 1;
+    count = Math.min(count, shapes.length);
+
+    let removedShapes = [];
+    setShapes((prev) => {
+      const newShapes = [...prev];
+      removedShapes = newShapes.splice(-count, count);
+      return newShapes;
+    });
+
+    setRedoStack((prev) => [removedShapes, ...prev]);
+    for (let i = 0; i < count; i++) {
+      socketRef.current?.send(JSON.stringify({ type: "undo" }));
+    }
   };
 
   const redo = () => {
     if (redoStack.length === 0) return;
-    const nextShape = redoStack[0];
+    const batch = redoStack[0];
+    const batchArray = Array.isArray(batch) ? batch : [batch];
+
     setRedoStack((prev) => prev.slice(1));
-    setShapes((prev) => [...prev, nextShape]);
-    socketRef.current?.send(JSON.stringify(nextShape));
+    setShapes((prev) => [...prev, ...batchArray]);
+    strokeHistory.current.push(batchArray.length);
+
+    batchArray.forEach((shape) => {
+      socketRef.current?.send(JSON.stringify(shape));
+    });
   };
 
-  function connectSocket(name, roomId, admin) {
-    const socket = new WebSocket(`ws://localhost:8000/ws/${roomId}`);
-    socketRef.current = socket;
-    socket.onopen = () => {
-      if (admin) socket.send(JSON.stringify({ type: "create" }));
-      socket.send(JSON.stringify({ type: "join", username: name }));
-      setConnected(true);
-    };
-    socket.onmessage = (e) => {
-      const data = JSON.parse(e.data);
-      if (data.type === "users") {
-        setUserList(data.list);
-        return;
-      }
-      if (data.type === "draw") {
-        setShapes((prev) => [...prev, data]);
-        return;
-      }
-      if (data.type === "undo") {
-        setShapes((prev) => prev.slice(0, -1));
-        return;
-      }
-      if (data.type === "clear_board") {
-        setShapes([]);
-        setRedoStack([]);
-        return;
-      }
-      if (data.type === "code" && editorRef.current) {
-        if (editorRef.current.getValue() !== data.code) {
-          isRemote.current = true;
-          editorRef.current.setValue(data.code);
-          isRemote.current = false;
-        }
-        return;
-      }
-      if (data.type === "language") {
-        setLanguage(data.language);
-        return;
-      }
-      if (data.type === "terminate") {
-        window.location.reload();
-        return;
-      }
-      if (data.type === "chat") {
-        if (data.user !== username) {
-          setChatMessages((prev) => [...prev, data]);
-          if (!chatOpen) setUnread((u) => u + 1);
-        }
-        return;
-      }
-    };
+  function showToast(msg) {
+    setToast(msg);
+    setTimeout(() => setToast(""), 3000);
   }
 
+  function connectSocket(name, roomId, admin) {
+    try {
+      const socket = new WebSocket(`ws://localhost:8000/ws/${roomId}`);
+      socketRef.current = socket;
+
+      socket.onopen = () => {
+        if (admin) socket.send(JSON.stringify({ type: "create" }));
+        socket.send(JSON.stringify({ type: "join", username: name }));
+        setConnected(true);
+      };
+
+      socket.onerror = (err) => {
+        console.error("Socket Error:", err);
+        showToast("Connection failed! Is the backend running?");
+      };
+
+      socket.onclose = () => {
+        setConnected(false);
+      };
+
+      socket.onmessage = (e) => {
+        const data = JSON.parse(e.data);
+
+        if (data.type === "users") {
+          setUserList(data.list || []);
+          return;
+        }
+        if (data.type === "draw") {
+          setShapes((prev) => [...(prev || []), data]);
+          return;
+        }
+        if (data.type === "undo") {
+          setShapes((prev) => (prev || []).slice(0, -1));
+          return;
+        }
+        if (data.type === "clear_board") {
+          setShapes([]);
+          setRedoStack([]);
+          strokeHistory.current = [];
+          return;
+        }
+        if (data.type === "code" && editorRef.current) {
+          const currentCode = editorRef.current.getValue();
+          if (currentCode !== data.code) {
+            isRemote.current = true;
+            const position = editorRef.current.getPosition();
+            editorRef.current.setValue(data.code || "");
+            if (position) editorRef.current.setPosition(position);
+            setTimeout(() => {
+              isRemote.current = false;
+            }, 50);
+          }
+          return;
+        }
+        if (data.type === "language" && data.language) {
+          setLanguage(data.language);
+          return;
+        }
+        if (data.type === "invite") {
+          if ((data.to === "ALL" || data.to === name) && data.from !== name) {
+            const accept = window.confirm(
+              `👥 ${data.from} is inviting you to collaborate on the Whiteboard!\n\nClick OK to join them.`,
+            );
+            if (accept) {
+              setView("board");
+            }
+          }
+          return;
+        }
+        if (data.type === "terminate") {
+          window.location.reload();
+          return;
+        }
+        if (data.type === "chat") {
+          if (data.user !== name) {
+            setChatMessages((prev) => [...(prev || []), data]);
+            if (!chatOpenRef.current) setUnread((u) => u + 1);
+          }
+          return;
+        }
+      };
+    } catch (err) {
+      showToast("Invalid Room ID or connection error.");
+    }
+  }
+
+  const handleJoinOrCreate = (isCreating) => {
+    if (!nameInput.trim()) {
+      return showToast("Please enter a Username!");
+    }
+    if (!isCreating && !roomInput.trim()) {
+      return showToast("Please enter a Room ID!");
+    }
+
+    const id = isCreating
+      ? Math.random().toString(36).substring(2, 8)
+      : roomInput.trim();
+    setRoom(id);
+    setUsername(nameInput.trim());
+    usernameRef.current = nameInput.trim();
+    setIsAdmin(isCreating);
+    connectSocket(nameInput.trim(), id, isCreating);
+  };
+
   const onMouseDown = (e) => {
+    if (tool === "select" || e.button === 1) {
+      e.preventDefault();
+      isPanning.current = true;
+      lastMousePos.current = { x: e.clientX, y: e.clientY };
+      return;
+    }
+
     const rect = canvasRef.current.getBoundingClientRect();
     const x = e.clientX - rect.left;
     const y = e.clientY - rect.top;
-
-    if (tool === "select") {
-      isPanning.current = true;
-      lastMousePos.current = { x, y };
-      return;
-    }
 
     const world = toWorld(x, y);
     setRedoStack([]);
     isDrawing.current = true;
     startPos.current = world;
     currentPos.current = world;
+    currentStrokeCount.current = 0;
   };
 
   const onMouseMove = (e) => {
-    const rect = canvasRef.current.getBoundingClientRect();
-    const x = e.clientX - rect.left;
-    const y = e.clientY - rect.top;
-
     if (isPanning.current) {
-      // 🟢 FIXED: Board Drag Logic
-      setOffset((prev) => ({
-        x: prev.x + (x - lastMousePos.current.x),
-        y: prev.y + (y - lastMousePos.current.y),
-      }));
-      lastMousePos.current = { x, y };
+      const dx = e.clientX - lastMousePos.current.x;
+      const dy = e.clientY - lastMousePos.current.y;
+
+      offset.current = {
+        x: offset.current.x + dx,
+        y: offset.current.y + dy,
+      };
+      lastMousePos.current = { x: e.clientX, y: e.clientY };
+
+      if (canvasRef.current && canvasRef.current.parentElement) {
+        const bgPos = `${offset.current.x}px ${offset.current.y}px, ${offset.current.x}px ${offset.current.y}px, ${offset.current.x}px ${offset.current.y}px, ${offset.current.x}px ${offset.current.y}px`;
+        canvasRef.current.parentElement.style.backgroundPosition = bgPos;
+        redrawCanvas();
+      }
       return;
     }
 
     if (!isDrawing.current) return;
+
+    const rect = canvasRef.current.getBoundingClientRect();
+    const x = e.clientX - rect.left;
+    const y = e.clientY - rect.top;
     const world = toWorld(x, y);
+
+    if (
+      sizeIndicatorRef.current &&
+      ["rect", "circle", "triangle", "line"].includes(tool)
+    ) {
+      const w = Math.round(Math.abs(world.x - startPos.current.x));
+      const h = Math.round(Math.abs(world.y - startPos.current.y));
+      let text = `${w} x ${h}`;
+      if (tool === "circle") {
+        const r = Math.round(
+          Math.sqrt(
+            Math.pow(world.x - startPos.current.x, 2) +
+              Math.pow(world.y - startPos.current.y, 2),
+          ),
+        );
+        text = `R: ${r}`;
+      }
+      sizeIndicatorRef.current.style.display = "block";
+      sizeIndicatorRef.current.style.left = `${e.clientX - rect.left + 15}px`;
+      sizeIndicatorRef.current.style.top = `${e.clientY - rect.top + 15}px`;
+      sizeIndicatorRef.current.innerText = text;
+    }
 
     if (tool === "pen" || tool === "eraser") {
       const shape = {
@@ -268,15 +384,25 @@ export default function EditorPage() {
       };
       setShapes((prev) => [...prev, shape]);
       socketRef.current?.send(JSON.stringify(shape));
+      currentStrokeCount.current += 1;
       currentPos.current = world;
     }
   };
 
   const onMouseUp = (e) => {
+    if (sizeIndicatorRef.current)
+      sizeIndicatorRef.current.style.display = "none";
+
+    if (isPanning.current) {
+      isPanning.current = false;
+      return;
+    }
+
     if (isDrawing.current) {
       const rect = canvasRef.current.getBoundingClientRect();
       const world = toWorld(e.clientX - rect.left, e.clientY - rect.top);
       const shapeTools = ["line", "rect", "circle", "triangle"];
+
       if (shapeTools.includes(tool)) {
         const shape = {
           type: "draw",
@@ -289,43 +415,68 @@ export default function EditorPage() {
         };
         setShapes((prev) => [...prev, shape]);
         socketRef.current?.send(JSON.stringify(shape));
+        currentStrokeCount.current += 1;
+      }
+
+      if (currentStrokeCount.current > 0) {
+        strokeHistory.current.push(currentStrokeCount.current);
       }
     }
-    isPanning.current = false;
     isDrawing.current = false;
+  };
+
+  const onMouseOut = () => {
+    isDrawing.current = false;
+    isPanning.current = false;
+    if (sizeIndicatorRef.current)
+      sizeIndicatorRef.current.style.display = "none";
   };
 
   const clearBoard = () => {
     setShapes([]);
     setRedoStack([]);
+    strokeHistory.current = [];
     socketRef.current?.send(JSON.stringify({ type: "clear_board" }));
   };
 
   async function runCode() {
     setExecutionStatus("running");
-    const res = await fetch("http://localhost:8000/run", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        code: editorRef.current.getValue(),
-        language,
-        input: programInput,
-      }),
-    });
-    const data = await res.json();
-    setOutput(data.output || data.error);
-    setExecutionStatus(data.error ? "error" : "success");
-    setExecTime(data.time);
+    try {
+      const res = await fetch("http://localhost:8000/run", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          code: editorRef.current.getValue(),
+          language,
+          input: programInput,
+        }),
+      });
+      const data = await res.json();
+      setOutput(data.output || data.error);
+      setExecutionStatus(data.error ? "error" : "success");
+      setExecTime(data.time);
+    } catch (err) {
+      setOutput("Failed to run code. Is the server online?");
+      setExecutionStatus("error");
+    }
   }
 
   function handleMount(editor, monaco) {
     editorRef.current = editor;
     monacoRef.current = monaco;
+
+    monaco.editor.setModelLanguage(editor.getModel(), language);
+
     editor.onDidChangeModelContent(() => {
       if (!isRemote.current) {
-        socketRef.current?.send(
-          JSON.stringify({ type: "code", code: editor.getValue() }),
-        );
+        clearTimeout(codeTimeout.current);
+        codeTimeout.current = setTimeout(() => {
+          if (socketRef.current?.readyState === WebSocket.OPEN) {
+            socketRef.current.send(
+              JSON.stringify({ type: "code", code: editor.getValue() }),
+            );
+          }
+        }, 300);
       }
     });
   }
@@ -334,7 +485,7 @@ export default function EditorPage() {
     if (!chatInput.trim() || !socketRef.current) return;
     const msg = {
       type: "chat",
-      user: username,
+      user: usernameRef.current,
       text: chatInput,
       time: new Date().toLocaleTimeString([], {
         hour: "2-digit",
@@ -346,17 +497,39 @@ export default function EditorPage() {
     setChatInput("");
   };
 
+  const sendInvite = (target) => {
+    if (socketRef.current?.readyState === WebSocket.OPEN) {
+      socketRef.current.send(
+        JSON.stringify({
+          type: "invite",
+          from: usernameRef.current,
+          to: target,
+        }),
+      );
+      showToast(`Invite sent to ${target === "ALL" ? "everyone" : target}`);
+    }
+  };
+
   function toggleChat() {
-    setChatOpen(!chatOpen);
-    setUnread(0);
+    chatOpenRef.current = !chatOpenRef.current;
+    setChatOpen(chatOpenRef.current);
+    if (chatOpenRef.current) setUnread(0);
   }
+
   function copyRoom() {
     navigator.clipboard.writeText(room);
-    setToast("Room ID copied to clipboard");
-    setTimeout(() => setToast(""), 2000);
+    showToast("Room ID copied to clipboard");
   }
+
   function terminateSession() {
-    socketRef.current.send(JSON.stringify({ type: "terminate" }));
+    if (socketRef.current && socketRef.current.readyState === WebSocket.OPEN) {
+      socketRef.current.send(JSON.stringify({ type: "terminate" }));
+      setTimeout(() => {
+        window.location.reload();
+      }, 500);
+    } else {
+      window.location.reload();
+    }
   }
 
   if (!connected) {
@@ -385,17 +558,7 @@ export default function EditorPage() {
                 value={nameInput}
                 onChange={(e) => setNameInput(e.target.value)}
               />
-              <button
-                onClick={() => {
-                  const id = Math.random().toString(36).substring(2, 8);
-                  setRoom(id);
-                  setUsername(nameInput);
-                  setIsAdmin(true);
-                  connectSocket(nameInput, id, true);
-                }}
-              >
-                Enter
-              </button>
+              <button onClick={() => handleJoinOrCreate(true)}>Enter</button>
               <button className="secondary" onClick={() => setMode(null)}>
                 Back
               </button>
@@ -419,21 +582,14 @@ export default function EditorPage() {
                 value={roomInput}
                 onChange={(e) => setRoomInput(e.target.value)}
               />
-              <button
-                onClick={() => {
-                  setRoom(roomInput);
-                  setUsername(nameInput);
-                  connectSocket(nameInput, roomInput, false);
-                }}
-              >
-                Join
-              </button>
+              <button onClick={() => handleJoinOrCreate(false)}>Join</button>
               <button className="secondary" onClick={() => setMode(null)}>
                 Back
               </button>
             </>
           )}
         </div>
+        {toast && <div className="toast">{toast}</div>}
       </div>
     );
   }
@@ -447,7 +603,7 @@ export default function EditorPage() {
             <span className="room-id">{room}</span>
           </div>
           <div className="users">
-            {userList.map((u, i) => (
+            {(userList || []).map((u, i) => (
               <div key={i} className="user-dot">
                 {u ? u[0].toUpperCase() : "?"}
               </div>
@@ -490,7 +646,7 @@ export default function EditorPage() {
               </span>
             </div>
             <div className="chat-messages">
-              {chatMessages.map((m, i) => (
+              {(chatMessages || []).map((m, i) => (
                 <div
                   key={i}
                   className={`chat-row ${m.user === username ? "me" : ""}`}
@@ -529,9 +685,11 @@ export default function EditorPage() {
                   onChange={(e) => {
                     const newLang = e.target.value;
                     setLanguage(newLang);
-                    socketRef.current.send(
-                      JSON.stringify({ type: "language", language: newLang }),
-                    );
+                    if (socketRef.current?.readyState === WebSocket.OPEN) {
+                      socketRef.current.send(
+                        JSON.stringify({ type: "language", language: newLang }),
+                      );
+                    }
                   }}
                 >
                   <option value="python">Python</option>
@@ -575,13 +733,165 @@ export default function EditorPage() {
               display: view === "board" ? "block" : "none",
               height: "100%",
               position: "relative",
-              // 🟢 SYNCED GRID BACKGROUND
-              backgroundPosition: `${offset.x}px ${offset.y}px`,
-              backgroundSize: `${20 * scale}px ${20 * scale}px`,
+              backgroundPosition: `${offset.current.x}px ${offset.current.y}px, ${offset.current.x}px ${offset.current.y}px, ${offset.current.x}px ${offset.current.y}px, ${offset.current.x}px ${offset.current.y}px`,
+              backgroundSize: `${20 * scale}px ${20 * scale}px, ${20 * scale}px ${20 * scale}px, ${100 * scale}px ${100 * scale}px, ${100 * scale}px ${100 * scale}px`,
             }}
           >
-            {/* 🟢 ZOOM INDICATOR */}
-            <div className="zoom-badge">{Math.round(scale * 100)}%</div>
+            <div
+              ref={sizeIndicatorRef}
+              className="size-indicator"
+              style={{ display: "none" }}
+            />
+
+            <div className="zoom-controls">
+              <button onClick={zoomOut}>-</button>
+              <div className="zoom-badge">{Math.round(scale * 100)}%</div>
+              <button onClick={zoomIn}>+</button>
+            </div>
+
+            {/* 🟢 NEW: Floating Team Toggle Button */}
+            <button
+              className="miro-tool"
+              style={{
+                position: "absolute",
+                top: "20px",
+                right: "20px",
+                background: "white",
+                boxShadow: "0 2px 10px rgba(0,0,0,0.15)",
+                zIndex: 101,
+                width: "45px",
+                height: "45px",
+                borderRadius: "50%",
+              }}
+              onClick={() => setShowMembers(!showMembers)}
+            >
+              👥
+            </button>
+
+            {/* 🟢 NEW: Floating Team Panel */}
+            {showMembers && (
+              <div
+                style={{
+                  position: "absolute",
+                  top: "75px",
+                  right: "20px",
+                  width: "260px",
+                  background: "#020617",
+                  border: "1px solid #1e293b",
+                  borderRadius: "12px",
+                  boxShadow: "0 10px 30px rgba(0,0,0,0.3)",
+                  zIndex: 101,
+                  display: "flex",
+                  flexDirection: "column",
+                  overflow: "hidden",
+                }}
+              >
+                <div
+                  className="panel-header"
+                  style={{
+                    display: "flex",
+                    justifyContent: "space-between",
+                    alignItems: "center",
+                    padding: "12px",
+                    background: "#0f172a",
+                    borderBottom: "1px solid #1e293b",
+                  }}
+                >
+                  <span
+                    style={{
+                      color: "#e2e8f0",
+                      fontWeight: "bold",
+                      fontSize: "14px",
+                    }}
+                  >
+                    👥 Team Members
+                  </span>
+                  {/* 🟢 Admin Only - Invite All */}
+                  {isAdmin && (
+                    <button
+                      style={{
+                        padding: "4px 8px",
+                        fontSize: "11px",
+                        background: "#5865f2",
+                        color: "white",
+                        border: "none",
+                        borderRadius: "4px",
+                        cursor: "pointer",
+                        fontWeight: "bold",
+                      }}
+                      onClick={() => sendInvite("ALL")}
+                    >
+                      Invite All
+                    </button>
+                  )}
+                </div>
+                <div
+                  className="panel-body"
+                  style={{
+                    display: "flex",
+                    flexDirection: "column",
+                    gap: "8px",
+                    padding: "12px",
+                    maxHeight: "300px",
+                    overflowY: "auto",
+                  }}
+                >
+                  {(userList || []).length <= 1 && (
+                    <div
+                      style={{
+                        color: "#475569",
+                        fontSize: "13px",
+                        textAlign: "center",
+                        padding: "10px 0",
+                      }}
+                    >
+                      Waiting for others to join...
+                    </div>
+                  )}
+                  {(userList || []).map((u, i) => (
+                    <div
+                      key={i}
+                      style={{
+                        display: "flex",
+                        justifyContent: "space-between",
+                        alignItems: "center",
+                        background: "#1e293b",
+                        padding: "8px 12px",
+                        borderRadius: "8px",
+                      }}
+                    >
+                      <span
+                        style={{
+                          fontWeight: "600",
+                          fontSize: "13px",
+                          color: u === username ? "#38bdf8" : "white",
+                        }}
+                      >
+                        {u} {u === username && "(You)"}
+                      </span>
+                      {/* 🟢 Admin Only - Request Individual */}
+                      {isAdmin && u !== username && (
+                        <button
+                          style={{
+                            background: "#22c55e",
+                            color: "white",
+                            border: "none",
+                            padding: "4px 10px",
+                            borderRadius: "4px",
+                            cursor: "pointer",
+                            fontSize: "11px",
+                            fontWeight: "bold",
+                          }}
+                          onClick={() => sendInvite(u)}
+                        >
+                          Request
+                        </button>
+                      )}
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
 
             <div className="miro-sidebar-container">
               <div className="miro-main-tools">
@@ -635,14 +945,16 @@ export default function EditorPage() {
                 </div>
               )}
               <div className="miro-history-tools">
-                <button onClick={undo} disabled={shapes.length === 0}>
+                <button onClick={undo} disabled={(shapes || []).length === 0}>
                   ↩
                 </button>
-                <button onClick={redo} disabled={redoStack.length === 0}>
+                <button
+                  onClick={redo}
+                  disabled={(redoStack || []).length === 0}
+                >
                   ↪
                 </button>
               </div>
-              {/* 🟢 TARGET / RESET VIEW */}
               <button
                 className="miro-tool"
                 style={{
@@ -652,7 +964,11 @@ export default function EditorPage() {
                 }}
                 onClick={() => {
                   setScale(1);
-                  setOffset({ x: 0, y: 0 });
+                  offset.current = { x: 0, y: 0 };
+                  if (canvasRef.current && canvasRef.current.parentElement) {
+                    canvasRef.current.parentElement.style.backgroundPosition = `0px 0px, 0px 0px, 0px 0px, 0px 0px`;
+                  }
+                  redrawCanvas();
                 }}
               >
                 🎯
@@ -663,7 +979,7 @@ export default function EditorPage() {
               onMouseDown={onMouseDown}
               onMouseMove={onMouseMove}
               onMouseUp={onMouseUp}
-              onMouseOut={() => (isDrawing.current = false)}
+              onMouseOut={onMouseOut}
               style={{
                 width: "100%",
                 height: "100%",
@@ -678,6 +994,7 @@ export default function EditorPage() {
           </div>
         </div>
 
+        {/* The Side Panel for Input/Output is strictly for "Code" view now */}
         {view === "code" && (
           <div className="side-panel">
             <div className="input-panel">
@@ -693,7 +1010,7 @@ export default function EditorPage() {
                 className="panel-header"
                 style={{ display: "flex", justifyContent: "space-between" }}
               >
-                <span>🟢 Output</span>{" "}
+                <span>🟢 Output</span>
                 {execTime && (
                   <span className="time-badge">⏱ {execTime} ms</span>
                 )}
@@ -720,7 +1037,6 @@ export default function EditorPage() {
         )}
       </div>
       {toast && <div className="toast">{toast}</div>}
-      {/* 🟢 CSS REMAINS UNCHANGED AS PER YOUR REQUIREMENT */}
     </div>
   );
 }
