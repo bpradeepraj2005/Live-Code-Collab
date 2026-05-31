@@ -26,6 +26,10 @@ export default function EditorPage() {
   const offset = useRef({ x: 0, y: 0 });
   const isPanning = useRef(false);
   const lastMousePos = useRef({ x: 0, y: 0 });
+  const scaleRef = useRef(1);
+  useEffect(() => {
+    scaleRef.current = scale;
+  }, [scale]);
 
   const [shapes, setShapes] = useState([]);
   const [redoStack, setRedoStack] = useState([]);
@@ -53,8 +57,14 @@ export default function EditorPage() {
   const [showColors, setShowColors] = useState(false);
   const colors = ["#020617", "#ef4444", "#22c55e", "#3b82f6", "#f59e0b"];
 
-  // 🟢 NEW: State for the floating members window
+  // 🟢 State for the dropdown members window and separate permissions
   const [showMembers, setShowMembers] = useState(false);
+  const [allowedCodeUsers, setAllowedCodeUsers] = useState([]);
+  const [allowedBoardUsers, setAllowedBoardUsers] = useState([]);
+  const [inviteAlert, setInviteAlert] = useState(null);
+
+  const canEditCode = isAdmin || allowedCodeUsers.includes(username);
+  const canEditBoard = isAdmin || allowedBoardUsers.includes(username);
 
   const toWorld = (x, y) => ({
     x: (x - offset.current.x) / scale,
@@ -64,17 +74,30 @@ export default function EditorPage() {
   const handleWheel = (e) => {
     e.preventDefault();
     const factor = Math.pow(1.1, -e.deltaY / 100);
-    const newScale = Math.min(Math.max(scale * factor, 0.1), 5);
+    const newScale = Math.min(Math.max(scaleRef.current * factor, 0.1), 5);
 
     const rect = canvasRef.current.getBoundingClientRect();
     const mouseX = e.clientX - rect.left;
     const mouseY = e.clientY - rect.top;
 
-    offset.current = {
-      x: mouseX - (mouseX - offset.current.x) * (newScale / scale),
-      y: mouseY - (mouseY - offset.current.y) * (newScale / scale),
+    const newOffset = {
+      x: mouseX - (mouseX - offset.current.x) * (newScale / scaleRef.current),
+      y: mouseY - (mouseY - offset.current.y) * (newScale / scaleRef.current),
     };
+
+    offset.current = newOffset;
+    scaleRef.current = newScale;
     setScale(newScale);
+
+    if (socketRef.current?.readyState === WebSocket.OPEN) {
+      socketRef.current.send(
+        JSON.stringify({
+          type: "sync_view",
+          scale: newScale,
+          offset: newOffset,
+        }),
+      );
+    }
   };
 
   const zoomIn = () => setScale((s) => Math.min(s + 0.1, 5));
@@ -103,19 +126,22 @@ export default function EditorPage() {
     const ctx = canvas.getContext("2d");
     ctx.clearRect(0, 0, canvas.width, canvas.height);
 
+    const currentScale = scaleRef.current;
+
     ctx.save();
     ctx.translate(offset.current.x, offset.current.y);
-    ctx.scale(scale, scale);
+    ctx.scale(currentScale, currentScale);
+    ctx.setLineDash([]);
 
     (shapes || []).forEach((s) => {
       ctx.beginPath();
       if (s.tool === "eraser") {
         ctx.globalCompositeOperation = "destination-out";
-        ctx.lineWidth = 30 / scale;
+        ctx.lineWidth = 30 / currentScale;
       } else {
         ctx.globalCompositeOperation = "source-over";
         ctx.strokeStyle = s.color;
-        ctx.lineWidth = 4 / scale;
+        ctx.lineWidth = 4 / currentScale;
       }
       ctx.lineCap = "round";
       ctx.lineJoin = "round";
@@ -223,14 +249,60 @@ export default function EditorPage() {
       socket.onmessage = (e) => {
         const data = JSON.parse(e.data);
 
+        if (data.type === "sync_view") {
+          scaleRef.current = data.scale;
+          setScale(data.scale);
+          offset.current = data.offset;
+
+          if (canvasRef.current && canvasRef.current.parentElement) {
+            const bgPos = `${data.offset.x}px ${data.offset.y}px, ${data.offset.x}px ${data.offset.y}px, ${data.offset.x}px ${data.offset.y}px, ${data.offset.x}px ${data.offset.y}px`;
+            canvasRef.current.parentElement.style.backgroundPosition = bgPos;
+            canvasRef.current.parentElement.style.backgroundSize = `${20 * data.scale}px ${20 * data.scale}px, ${20 * data.scale}px ${20 * data.scale}px, ${100 * data.scale}px ${100 * data.scale}px, ${100 * data.scale}px ${100 * data.scale}px`;
+            redrawCanvas();
+          }
+          return;
+        }
+
         if (data.type === "users") {
           setUserList(data.list || []);
           return;
         }
         if (data.type === "draw") {
           setShapes((prev) => [...(prev || []), data]);
+
+          if (canvasRef.current && canvasRef.current.parentElement) {
+            if (data.scale && data.scale !== scaleRef.current) {
+              scaleRef.current = data.scale;
+              setScale(data.scale);
+            }
+
+            const currentScale = scaleRef.current;
+            const rect =
+              canvasRef.current.parentElement.getBoundingClientRect();
+            const screenX = data.x1 * currentScale + offset.current.x;
+            const screenY = data.y1 * currentScale + offset.current.y;
+            const margin = 50;
+
+            if (
+              screenX < margin ||
+              screenX > rect.width - margin ||
+              screenY < margin ||
+              screenY > rect.height - margin
+            ) {
+              offset.current = {
+                x: rect.width / 2 - data.x1 * currentScale,
+                y: rect.height / 2 - data.y1 * currentScale,
+              };
+
+              const bgPos = `${offset.current.x}px ${offset.current.y}px, ${offset.current.x}px ${offset.current.y}px, ${offset.current.x}px ${offset.current.y}px, ${offset.current.x}px ${offset.current.y}px`;
+              canvasRef.current.parentElement.style.backgroundPosition = bgPos;
+              canvasRef.current.parentElement.style.backgroundSize = `${20 * currentScale}px ${20 * currentScale}px, ${20 * currentScale}px ${20 * currentScale}px, ${100 * currentScale}px ${100 * currentScale}px, ${100 * currentScale}px ${100 * currentScale}px`;
+              redrawCanvas();
+            }
+          }
           return;
         }
+
         if (data.type === "undo") {
           setShapes((prev) => (prev || []).slice(0, -1));
           return;
@@ -258,17 +330,29 @@ export default function EditorPage() {
           setLanguage(data.language);
           return;
         }
+
         if (data.type === "invite") {
-          if ((data.to === "ALL" || data.to === name) && data.from !== name) {
-            const accept = window.confirm(
-              `👥 ${data.from} is inviting you to collaborate on the Whiteboard!\n\nClick OK to join them.`,
-            );
-            if (accept) {
-              setView("board");
-            }
+          console.log("📩 Received invite data:", data);
+          const myName = usernameRef.current;
+          if (
+            (data.to === "ALL" || data.to === myName) &&
+            data.from !== myName
+          ) {
+            setInviteAlert(data.from);
           }
           return;
         }
+
+        if (data.type === "allowed_code_users") {
+          setAllowedCodeUsers(data.allowed_code_users);
+          return;
+        }
+
+        if (data.type === "allowed_board_users") {
+          setAllowedBoardUsers(data.allowed_board_users);
+          return;
+        }
+
         if (data.type === "terminate") {
           window.location.reload();
           return;
@@ -278,6 +362,36 @@ export default function EditorPage() {
             setChatMessages((prev) => [...(prev || []), data]);
             if (!chatOpenRef.current) setUnread((u) => u + 1);
           }
+          return;
+        }
+
+        if (data.type === "init") {
+          if (data.code && editorRef.current)
+            editorRef.current.setValue(data.code);
+          if (data.language) setLanguage(data.language);
+          if (data.input) setProgramInput(data.input);
+
+          if (data.allowed_code_users)
+            setAllowedCodeUsers(data.allowed_code_users);
+          if (data.allowed_board_users)
+            setAllowedBoardUsers(data.allowed_board_users);
+          return;
+        }
+
+        if (data.type === "input") {
+          setProgramInput(data.input || "");
+          return;
+        }
+
+        if (data.type === "run_start") {
+          setExecutionStatus("running");
+          return;
+        }
+
+        if (data.type === "run_end") {
+          setOutput(data.output || data.error);
+          setExecutionStatus(data.error ? "error" : "success");
+          setExecTime(data.time);
           return;
         }
       };
@@ -305,6 +419,11 @@ export default function EditorPage() {
   };
 
   const onMouseDown = (e) => {
+    if (!canEditBoard && tool !== "select") {
+      showToast("🔒 Ask the Admin for edit permissions!");
+      return;
+    }
+
     if (tool === "select" || e.button === 1) {
       e.preventDefault();
       isPanning.current = true;
@@ -340,6 +459,16 @@ export default function EditorPage() {
         canvasRef.current.parentElement.style.backgroundPosition = bgPos;
         redrawCanvas();
       }
+
+      if (socketRef.current?.readyState === WebSocket.OPEN) {
+        socketRef.current.send(
+          JSON.stringify({
+            type: "sync_view",
+            scale: scaleRef.current,
+            offset: offset.current,
+          }),
+        );
+      }
       return;
     }
 
@@ -350,26 +479,71 @@ export default function EditorPage() {
     const y = e.clientY - rect.top;
     const world = toWorld(x, y);
 
-    if (
-      sizeIndicatorRef.current &&
-      ["rect", "circle", "triangle", "line"].includes(tool)
-    ) {
-      const w = Math.round(Math.abs(world.x - startPos.current.x));
-      const h = Math.round(Math.abs(world.y - startPos.current.y));
-      let text = `${w} x ${h}`;
-      if (tool === "circle") {
-        const r = Math.round(
-          Math.sqrt(
-            Math.pow(world.x - startPos.current.x, 2) +
-              Math.pow(world.y - startPos.current.y, 2),
-          ),
-        );
-        text = `R: ${r}`;
+    const shapeTools = ["line", "rect", "circle", "triangle"];
+
+    if (shapeTools.includes(tool)) {
+      if (sizeIndicatorRef.current) {
+        const w = Math.round(Math.abs(world.x - startPos.current.x));
+        const h = Math.round(Math.abs(world.y - startPos.current.y));
+        let text = `${w} x ${h}`;
+        if (tool === "circle") {
+          const r = Math.round(
+            Math.sqrt(
+              Math.pow(world.x - startPos.current.x, 2) +
+                Math.pow(world.y - startPos.current.y, 2),
+            ),
+          );
+          text = `R: ${r}`;
+        }
+        sizeIndicatorRef.current.style.display = "block";
+        sizeIndicatorRef.current.style.left = `${e.clientX - rect.left + 15}px`;
+        sizeIndicatorRef.current.style.top = `${e.clientY - rect.top + 15}px`;
+        sizeIndicatorRef.current.innerText = text;
       }
-      sizeIndicatorRef.current.style.display = "block";
-      sizeIndicatorRef.current.style.left = `${e.clientX - rect.left + 15}px`;
-      sizeIndicatorRef.current.style.top = `${e.clientY - rect.top + 15}px`;
-      sizeIndicatorRef.current.innerText = text;
+
+      redrawCanvas();
+
+      const ctx = canvasRef.current.getContext("2d");
+      ctx.save();
+      ctx.translate(offset.current.x, offset.current.y);
+      ctx.scale(scale, scale);
+
+      ctx.beginPath();
+      ctx.strokeStyle = brushColor;
+      ctx.lineWidth = 2 / scale;
+      ctx.setLineDash([6 / scale, 6 / scale]);
+      ctx.lineCap = "round";
+      ctx.lineJoin = "round";
+
+      if (tool === "rect") {
+        ctx.strokeRect(
+          startPos.current.x,
+          startPos.current.y,
+          world.x - startPos.current.x,
+          world.y - startPos.current.y,
+        );
+      } else if (tool === "circle") {
+        const radius = Math.sqrt(
+          Math.pow(world.x - startPos.current.x, 2) +
+            Math.pow(world.y - startPos.current.y, 2),
+        );
+        ctx.arc(startPos.current.x, startPos.current.y, radius, 0, 2 * Math.PI);
+        ctx.stroke();
+      } else if (tool === "triangle") {
+        ctx.moveTo(
+          startPos.current.x + (world.x - startPos.current.x) / 2,
+          startPos.current.y,
+        );
+        ctx.lineTo(startPos.current.x, world.y);
+        ctx.lineTo(world.x, world.y);
+        ctx.closePath();
+        ctx.stroke();
+      } else if (tool === "line") {
+        ctx.moveTo(startPos.current.x, startPos.current.y);
+        ctx.lineTo(world.x, world.y);
+        ctx.stroke();
+      }
+      ctx.restore();
     }
 
     if (tool === "pen" || tool === "eraser") {
@@ -381,6 +555,7 @@ export default function EditorPage() {
         y1: world.y,
         color: brushColor,
         tool,
+        scale: scaleRef.current,
       };
       setShapes((prev) => [...prev, shape]);
       socketRef.current?.send(JSON.stringify(shape));
@@ -412,6 +587,7 @@ export default function EditorPage() {
           y1: world.y,
           color: brushColor,
           tool,
+          scale: scaleRef.current,
         };
         setShapes((prev) => [...prev, shape]);
         socketRef.current?.send(JSON.stringify(shape));
@@ -441,6 +617,11 @@ export default function EditorPage() {
 
   async function runCode() {
     setExecutionStatus("running");
+
+    if (socketRef.current?.readyState === WebSocket.OPEN) {
+      socketRef.current.send(JSON.stringify({ type: "run_start" }));
+    }
+
     try {
       const res = await fetch("http://localhost:8000/run", {
         method: "POST",
@@ -452,9 +633,24 @@ export default function EditorPage() {
         }),
       });
       const data = await res.json();
-      setOutput(data.output || data.error);
-      setExecutionStatus(data.error ? "error" : "success");
+
+      const finalOutput = data.output || data.error;
+      const finalStatus = data.error ? "error" : "success";
+
+      setOutput(finalOutput);
+      setExecutionStatus(finalStatus);
       setExecTime(data.time);
+
+      if (socketRef.current?.readyState === WebSocket.OPEN) {
+        socketRef.current.send(
+          JSON.stringify({
+            type: "run_end",
+            output: data.output,
+            error: data.error,
+            time: data.time,
+          }),
+        );
+      }
     } catch (err) {
       setOutput("Failed to run code. Is the server online?");
       setExecutionStatus("error");
@@ -495,6 +691,40 @@ export default function EditorPage() {
     socketRef.current.send(JSON.stringify(msg));
     setChatMessages((prev) => [...prev, msg]);
     setChatInput("");
+  };
+
+  const togglePermission = (targetUser, type) => {
+    if (type === "code") {
+      let newAllowed = [...allowedCodeUsers];
+      if (newAllowed.includes(targetUser))
+        newAllowed = newAllowed.filter((u) => u !== targetUser);
+      else newAllowed.push(targetUser);
+
+      setAllowedCodeUsers(newAllowed);
+      if (socketRef.current?.readyState === WebSocket.OPEN) {
+        socketRef.current.send(
+          JSON.stringify({
+            type: "allowed_code_users",
+            allowed_code_users: newAllowed,
+          }),
+        );
+      }
+    } else if (type === "board") {
+      let newAllowed = [...allowedBoardUsers];
+      if (newAllowed.includes(targetUser))
+        newAllowed = newAllowed.filter((u) => u !== targetUser);
+      else newAllowed.push(targetUser);
+
+      setAllowedBoardUsers(newAllowed);
+      if (socketRef.current?.readyState === WebSocket.OPEN) {
+        socketRef.current.send(
+          JSON.stringify({
+            type: "allowed_board_users",
+            allowed_board_users: newAllowed,
+          }),
+        );
+      }
+    }
   };
 
   const sendInvite = (target) => {
@@ -637,47 +867,125 @@ export default function EditorPage() {
       </div>
 
       <div className="workspace">
-        {chatOpen && (
-          <div className="chat-popup">
-            <div className="chat-header">
-              💬 Team Chat{" "}
-              <span onClick={toggleChat} className="close">
-                ✖
-              </span>
-            </div>
-            <div className="chat-messages">
-              {(chatMessages || []).map((m, i) => (
-                <div
-                  key={i}
-                  className={`chat-row ${m.user === username ? "me" : ""}`}
-                >
-                  <div className="chat-bubble">
-                    <div className="chat-meta">
-                      <span>{m.user}</span> <span>{m.time}</span>
-                    </div>
-                    <div>{m.text}</div>
-                  </div>
-                </div>
-              ))}
-            </div>
-            <div className="chat-input-bar">
-              <input
-                value={chatInput}
-                onChange={(e) => setChatInput(e.target.value)}
-                onKeyDown={(e) => e.key === "Enter" && sendChatMessage()}
-                placeholder="Message team..."
-              />
-              <button onClick={sendChatMessage}>Send</button>
+        {/* 🟢 Custom Non-Blocking Invite Modal */}
+        {inviteAlert && (
+          <div
+            style={{
+              position: "fixed",
+              top: "50%",
+              left: "50%",
+              transform: "translate(-50%, -50%)",
+              background: "#0f172a",
+              border: "1px solid #38bdf8",
+              padding: "24px",
+              borderRadius: "12px",
+              zIndex: 999999,
+              boxShadow: "0 10px 40px rgba(0,0,0,0.6)",
+              textAlign: "center",
+            }}
+          >
+            <h3 style={{ margin: "0 0 10px 0", color: "#e2e8f0" }}>
+              👥 Come to the Whiteboard!
+            </h3>
+            <p
+              style={{
+                margin: "0 0 20px 0",
+                color: "#94a3b8",
+                fontSize: "14px",
+              }}
+            >
+              <strong style={{ color: "#38bdf8" }}>{inviteAlert}</strong> wants
+              you to look at something.
+            </p>
+            <div
+              style={{ display: "flex", gap: "12px", justifyContent: "center" }}
+            >
+              <button
+                style={{
+                  padding: "8px 20px",
+                  background: "#38bdf8",
+                  color: "#020617",
+                  border: "none",
+                  borderRadius: "8px",
+                  cursor: "pointer",
+                  fontWeight: "bold",
+                }}
+                onClick={() => {
+                  setView("board");
+                  setInviteAlert(null);
+                }}
+              >
+                Join Them
+              </button>
+              <button
+                style={{
+                  padding: "8px 20px",
+                  background: "transparent",
+                  color: "#94a3b8",
+                  border: "1px solid #334155",
+                  borderRadius: "8px",
+                  cursor: "pointer",
+                }}
+                onClick={() => setInviteAlert(null)}
+              >
+                Ignore
+              </button>
             </div>
           </div>
         )}
 
-        <div className="editor-area">
+        <div className="editor-area" style={{ position: "relative" }}>
+          {/* 🟢 MOVED CHAT HERE: Inside the editor-area */}
+          {chatOpen && (
+            <div className="chat-popup">
+              <div className="chat-header">
+                💬 Team Chat{" "}
+                <span onClick={toggleChat} className="close">
+                  ✖
+                </span>
+              </div>
+              <div className="chat-messages">
+                {(chatMessages || []).map((m, i) => (
+                  <div
+                    key={i}
+                    className={`chat-row ${m.user === username ? "me" : ""}`}
+                  >
+                    <div className="chat-bubble">
+                      <div className="chat-meta">
+                        <span>{m.user}</span> <span>{m.time}</span>
+                      </div>
+                      <div>{m.text}</div>
+                    </div>
+                  </div>
+                ))}
+              </div>
+              <div className="chat-input-bar">
+                <input
+                  value={chatInput}
+                  onChange={(e) => setChatInput(e.target.value)}
+                  onKeyDown={(e) => e.key === "Enter" && sendChatMessage()}
+                  placeholder="Message team..."
+                />
+                <button onClick={sendChatMessage}>Send</button>
+              </div>
+            </div>
+          )}
+
           <div className="controls-bar">
             <div className="left-controls">
               <button className="chat-toggle-btn" onClick={toggleChat}>
                 💬 {unread > 0 && <span className="badge">{unread}</span>}
               </button>
+
+              {/* 🟢 Team button neatly tucked in the top toolbar */}
+              <button
+                className="chat-toggle-btn"
+                style={{ display: "flex", gap: "6px", alignItems: "center" }}
+                onClick={() => setShowMembers(!showMembers)}
+              >
+                👥 Team
+              </button>
+
               {view === "code" ? (
                 <select
                   className="lang-box"
@@ -711,6 +1019,169 @@ export default function EditorPage() {
             )}
           </div>
 
+          {/* 🟢 The Team Panel drops down cleanly from the toolbar */}
+          {showMembers && (
+            <div
+              style={{
+                position: "absolute",
+                top: "56px",
+                left: "64px",
+                width: "340px",
+                background: "#020617",
+                border: "1px solid #1e293b",
+                borderRadius: "12px",
+                boxShadow: "0 10px 40px rgba(0,0,0,0.6)",
+                zIndex: 1000,
+                display: "flex",
+                flexDirection: "column",
+                overflow: "hidden",
+              }}
+            >
+              <div
+                className="panel-header"
+                style={{
+                  display: "flex",
+                  justifyContent: "space-between",
+                  alignItems: "center",
+                  padding: "12px",
+                  background: "#0f172a",
+                  borderBottom: "1px solid #1e293b",
+                }}
+              >
+                <span
+                  style={{
+                    color: "#e2e8f0",
+                    fontWeight: "bold",
+                    fontSize: "14px",
+                  }}
+                >
+                  👥 Team Members
+                </span>
+                {isAdmin && (
+                  <button
+                    style={{
+                      padding: "4px 8px",
+                      fontSize: "11px",
+                      background: "#5865f2",
+                      color: "white",
+                      border: "none",
+                      borderRadius: "4px",
+                      cursor: "pointer",
+                      fontWeight: "bold",
+                    }}
+                    onClick={() => sendInvite("ALL")}
+                  >
+                    Invite All
+                  </button>
+                )}
+              </div>
+              <div
+                className="panel-body"
+                style={{
+                  display: "flex",
+                  flexDirection: "column",
+                  gap: "8px",
+                  padding: "12px",
+                  maxHeight: "300px",
+                  overflowY: "auto",
+                }}
+              >
+                {(userList || []).length <= 1 && (
+                  <div
+                    style={{
+                      color: "#475569",
+                      fontSize: "13px",
+                      textAlign: "center",
+                      padding: "10px 0",
+                    }}
+                  >
+                    Waiting for others to join...
+                  </div>
+                )}
+                {(userList || []).map((u, i) => (
+                  <div
+                    key={i}
+                    style={{
+                      display: "flex",
+                      justifyContent: "space-between",
+                      alignItems: "center",
+                      background: "#1e293b",
+                      padding: "8px 12px",
+                      borderRadius: "8px",
+                    }}
+                  >
+                    <span
+                      style={{
+                        fontWeight: "600",
+                        fontSize: "13px",
+                        color: u === username ? "#38bdf8" : "white",
+                      }}
+                    >
+                      {u} {u === username && "(You)"}
+                    </span>
+                    {isAdmin && u !== username && (
+                      <div style={{ display: "flex", gap: "6px" }}>
+                        <button
+                          style={{
+                            background: allowedCodeUsers.includes(u)
+                              ? "#ef4444"
+                              : "#eab308",
+                            color: "white",
+                            border: "none",
+                            padding: "4px 8px",
+                            borderRadius: "4px",
+                            cursor: "pointer",
+                            fontSize: "10px",
+                            fontWeight: "bold",
+                          }}
+                          onClick={() => togglePermission(u, "code")}
+                        >
+                          {allowedCodeUsers.includes(u)
+                            ? "Revoke Code"
+                            : "Allow Code"}
+                        </button>
+                        <button
+                          style={{
+                            background: allowedBoardUsers.includes(u)
+                              ? "#ef4444"
+                              : "#22c55e",
+                            color: "white",
+                            border: "none",
+                            padding: "4px 8px",
+                            borderRadius: "4px",
+                            cursor: "pointer",
+                            fontSize: "10px",
+                            fontWeight: "bold",
+                          }}
+                          onClick={() => togglePermission(u, "board")}
+                        >
+                          {allowedBoardUsers.includes(u)
+                            ? "Revoke Draw"
+                            : "Allow Draw"}
+                        </button>
+                        <button
+                          style={{
+                            background: "#38bdf8",
+                            color: "#020617",
+                            border: "none",
+                            padding: "4px 8px",
+                            borderRadius: "4px",
+                            cursor: "pointer",
+                            fontSize: "10px",
+                            fontWeight: "bold",
+                          }}
+                          onClick={() => sendInvite(u)}
+                        >
+                          Invite
+                        </button>
+                      </div>
+                    )}
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+
           <div
             className="editor"
             style={{
@@ -723,7 +1194,11 @@ export default function EditorPage() {
               theme="vs-dark"
               language={language}
               onMount={handleMount}
-              options={{ minimap: { enabled: false }, fontSize: 14 }}
+              options={{
+                readOnly: !canEditCode,
+                minimap: { enabled: false },
+                fontSize: 14,
+              }}
             />
           </div>
 
@@ -748,150 +1223,6 @@ export default function EditorPage() {
               <div className="zoom-badge">{Math.round(scale * 100)}%</div>
               <button onClick={zoomIn}>+</button>
             </div>
-
-            {/* 🟢 NEW: Floating Team Toggle Button */}
-            <button
-              className="miro-tool"
-              style={{
-                position: "absolute",
-                top: "20px",
-                right: "20px",
-                background: "white",
-                boxShadow: "0 2px 10px rgba(0,0,0,0.15)",
-                zIndex: 101,
-                width: "45px",
-                height: "45px",
-                borderRadius: "50%",
-              }}
-              onClick={() => setShowMembers(!showMembers)}
-            >
-              👥
-            </button>
-
-            {/* 🟢 NEW: Floating Team Panel */}
-            {showMembers && (
-              <div
-                style={{
-                  position: "absolute",
-                  top: "75px",
-                  right: "20px",
-                  width: "260px",
-                  background: "#020617",
-                  border: "1px solid #1e293b",
-                  borderRadius: "12px",
-                  boxShadow: "0 10px 30px rgba(0,0,0,0.3)",
-                  zIndex: 101,
-                  display: "flex",
-                  flexDirection: "column",
-                  overflow: "hidden",
-                }}
-              >
-                <div
-                  className="panel-header"
-                  style={{
-                    display: "flex",
-                    justifyContent: "space-between",
-                    alignItems: "center",
-                    padding: "12px",
-                    background: "#0f172a",
-                    borderBottom: "1px solid #1e293b",
-                  }}
-                >
-                  <span
-                    style={{
-                      color: "#e2e8f0",
-                      fontWeight: "bold",
-                      fontSize: "14px",
-                    }}
-                  >
-                    👥 Team Members
-                  </span>
-                  {/* 🟢 Admin Only - Invite All */}
-                  {isAdmin && (
-                    <button
-                      style={{
-                        padding: "4px 8px",
-                        fontSize: "11px",
-                        background: "#5865f2",
-                        color: "white",
-                        border: "none",
-                        borderRadius: "4px",
-                        cursor: "pointer",
-                        fontWeight: "bold",
-                      }}
-                      onClick={() => sendInvite("ALL")}
-                    >
-                      Invite All
-                    </button>
-                  )}
-                </div>
-                <div
-                  className="panel-body"
-                  style={{
-                    display: "flex",
-                    flexDirection: "column",
-                    gap: "8px",
-                    padding: "12px",
-                    maxHeight: "300px",
-                    overflowY: "auto",
-                  }}
-                >
-                  {(userList || []).length <= 1 && (
-                    <div
-                      style={{
-                        color: "#475569",
-                        fontSize: "13px",
-                        textAlign: "center",
-                        padding: "10px 0",
-                      }}
-                    >
-                      Waiting for others to join...
-                    </div>
-                  )}
-                  {(userList || []).map((u, i) => (
-                    <div
-                      key={i}
-                      style={{
-                        display: "flex",
-                        justifyContent: "space-between",
-                        alignItems: "center",
-                        background: "#1e293b",
-                        padding: "8px 12px",
-                        borderRadius: "8px",
-                      }}
-                    >
-                      <span
-                        style={{
-                          fontWeight: "600",
-                          fontSize: "13px",
-                          color: u === username ? "#38bdf8" : "white",
-                        }}
-                      >
-                        {u} {u === username && "(You)"}
-                      </span>
-                      {/* 🟢 Admin Only - Request Individual */}
-                      {isAdmin && u !== username && (
-                        <button
-                          style={{
-                            background: "#22c55e",
-                            color: "white",
-                            border: "none",
-                            padding: "4px 10px",
-                            borderRadius: "4px",
-                            cursor: "pointer",
-                            fontSize: "11px",
-                            fontWeight: "bold",
-                          }}
-                          onClick={() => sendInvite(u)}
-                        >
-                          Request
-                        </button>
-                      )}
-                    </div>
-                  ))}
-                </div>
-              </div>
-            )}
 
             <div className="miro-sidebar-container">
               <div className="miro-main-tools">
@@ -1002,7 +1333,16 @@ export default function EditorPage() {
               <textarea
                 className="input-area"
                 value={programInput}
-                onChange={(e) => setProgramInput(e.target.value)}
+                readOnly={!canEditCode}
+                onChange={(e) => {
+                  const val = e.target.value;
+                  setProgramInput(val);
+                  if (socketRef.current?.readyState === WebSocket.OPEN) {
+                    socketRef.current.send(
+                      JSON.stringify({ type: "input", input: val }),
+                    );
+                  }
+                }}
               />
             </div>
             <div className="output-panel">

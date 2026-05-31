@@ -405,7 +405,7 @@ body {
   border-radius: 12px;
   display: flex;
   flex-direction: column;
-  z-index: 50;
+  z-index: 999;
   box-shadow: 0 10px 40px rgba(0, 0, 0, 0.5);
   animation: chatPop 0.2s ease;
 }
@@ -579,8 +579,14 @@ body {
 }
 
 @keyframes popIn {
-  0% { transform: scale(0.8); opacity: 0; }
-  100% { transform: scale(1); opacity: 1; }
+  0% {
+    transform: scale(0.8);
+    opacity: 0;
+  }
+  100% {
+    transform: scale(1);
+    opacity: 1;
+  }
 }
 
 .status-msg {
@@ -591,7 +597,9 @@ body {
   border-top: 1px dashed #334155;
 }
 
-.status-msg.success { color: #22c55e; }
+.status-msg.success {
+  color: #22c55e;
+}
 .status-msg.running {
   color: #38bdf8;
   border: none;
@@ -599,7 +607,9 @@ body {
   padding-bottom: 12px;
 }
 
-.error-text { color: #ef4444 !important; }
+.error-text {
+  color: #ef4444 !important;
+}
 
 /* ==========================================================================
    MIRO WHITEBOARD - GRID BACKGROUND & CANVAS
@@ -611,7 +621,9 @@ body {
   box-shadow: 0 2px 4px rgba(0, 0, 0, 0.05);
 }
 
-.clear-btn:hover { background: #fef2f2; }
+.clear-btn:hover {
+  background: #fef2f2;
+}
 
 /* 🟢 INFINITE GRAPH BOARD (Miro Style) */
 .miro-board {
@@ -705,16 +717,26 @@ body {
   transition: transform 0.1s;
 }
 
-.color-dot:hover { transform: scale(1.2); }
+.color-dot:hover {
+  transform: scale(1.2);
+}
 
 .color-dot.active {
   border-color: #cbd5e1;
-  box-shadow: 0 0 0 2px white, 0 0 0 4px #4262ff;
+  box-shadow:
+    0 0 0 2px white,
+    0 0 0 4px #4262ff;
 }
 
 @keyframes fadeIn {
-  from { opacity: 0; transform: translateX(-5px); }
-  to { opacity: 1; transform: translateX(0); }
+  from {
+    opacity: 0;
+    transform: translateX(-5px);
+  }
+  to {
+    opacity: 1;
+    transform: translateX(0);
+  }
 }
 
 /* 🟢 ZOOM CONTROLS MODULE */
@@ -725,7 +747,7 @@ body {
   display: flex;
   align-items: center;
   background: white;
-  box-shadow: 0 2px 10px rgba(0,0,0,0.1);
+  box-shadow: 0 2px 10px rgba(0, 0, 0, 0.1);
   border-radius: 8px;
   padding: 4px;
   z-index: 100;
@@ -768,5 +790,5 @@ body {
   pointer-events: none;
   z-index: 1000;
   white-space: nowrap;
-  box-shadow: 0 2px 6px rgba(0,0,0,0.2);
+  box-shadow: 0 2px 6px rgba(0, 0, 0, 0.2);
 }

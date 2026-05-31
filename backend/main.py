@@ -51,7 +51,9 @@ async def websocket_endpoint(websocket: WebSocket, room_id: str):
                 await websocket.send_text(json.dumps({"type": "init", **current}))
                 continue
 
-            if msg.get("type") in ["code", "language"]:
+            # Add "allowed_users" to the tracked state
+           # Track code and board permissions separately
+            if msg.get("type") in ["code", "language", "input", "allowed_code_users", "allowed_board_users"]:
                 room_state[room_id][msg["type"]] = msg.get(msg["type"])
             
             # Forward drawing, cursor, chat, and code to others
